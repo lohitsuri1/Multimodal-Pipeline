@@ -1,12 +1,28 @@
-# 🎬 Multimodal Pipeline - 5-Level AI Roadmap
+# 🎬 Multimodal Pipeline
 
-> **Build autonomous AI systems that generate investment videos weekly - without writing complex code**
+> **Build autonomous AI systems that generate videos weekly - without writing complex code**
 
 ![Stars](https://img.shields.io/badge/stars-%E2%AD%90%E2%AD%90%E2%AD%90%E2%AD%90%E2%AD%90-brightgreen)
 ![Status](https://img.shields.io/badge/status-production--ready-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)
 
-## 🚀 What is This?
+## 🕉️ NEW: Devotional Video Automation Pipeline
+
+**Generate 30-minute Radha Krishna devotional videos automatically every week!**
+
+🎯 **Features:**
+- ✅ AI-generated devotional scripts (OpenAI GPT-4)
+- ✅ Voice narration (Google TTS or ElevenLabs)
+- ✅ Royalty-free spiritual visuals (Pexels/Pixabay)
+- ✅ Background devotional music support
+- ✅ GitHub Actions automation (runs every Sunday)
+- ✅ 100% copyright-safe content
+
+📖 **[→ Go to Devotional Pipeline Documentation](DEVOTIONAL_PIPELINE_README.md)**
+
+---
+
+## 🚀 Original: 5-Level AI Roadmap
 
 This is a **complete implementation of the 5-Level AI Roadmap** that enables you to:
 
@@ -16,7 +32,9 @@ This is a **complete implementation of the 5-Level AI Roadmap** that enables you
 ✅ Deploy autonomous AI agents (24/7 automation)
 ✅ Build professional REST API (Super App)
 
-**Real-world use case**: Generate a professional 90-second investment video **every week automatically** 📺
+**Original use case**: Generate a professional 90-second investment video **every week automatically** 📺
+
+> **Note:** The original 5-level pipeline files are planned for future implementation. Currently, this repository contains the **Devotional Video Automation Pipeline** as a complete, working implementation.
 
 ---
 
