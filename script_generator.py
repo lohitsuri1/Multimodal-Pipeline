@@ -1,6 +1,6 @@
 """Script generator for devotional video content using OpenAI."""
 import openai
-from typing import Dict, List
+from typing import Dict, List, Any
 from config import Config
 
 class DevotionalScriptGenerator:
@@ -13,7 +13,7 @@ class DevotionalScriptGenerator:
         openai.api_key = Config.OPENAI_API_KEY
         self.duration_minutes = Config.VIDEO_DURATION_MINUTES
     
-    def generate_script(self, theme: str = None) -> Dict[str, any]:
+    def generate_script(self, theme: str = None) -> Dict[str, Any]:
         """
         Generate a devotional script.
         

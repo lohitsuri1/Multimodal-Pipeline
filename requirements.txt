@@ -2,7 +2,6 @@
 openai>=1.0.0
 python-dotenv>=1.0.0
 pydub>=0.25.1
-moviepy>=1.0.3
 requests>=2.31.0
 pillow>=10.0.0
 numpy>=1.24.0
@@ -14,9 +13,6 @@ elevenlabs>=0.2.0
 # Scheduling and automation
 schedule>=1.2.0
 pyyaml>=6.0
-
-# Video processing
-opencv-python>=4.8.0
 
 # Utilities
 tqdm>=4.66.0

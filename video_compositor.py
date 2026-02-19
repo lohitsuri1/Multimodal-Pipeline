@@ -94,7 +94,9 @@ class VideoCompositor:
             music = music[:voice_duration]
             
             # Reduce music volume relative to voice
-            music = music - (20 / Config.MUSIC_VOLUME)  # Lower volume significantly
+            # Calculate dB reduction: 0.2 volume -> -14dB, 0.5 volume -> -6dB, 0.8 volume -> -2dB
+            volume_reduction_db = 20 * (1 - Config.MUSIC_VOLUME)
+            music = music - volume_reduction_db
             
             # Overlay music under voice
             combined = voice.overlay(music)
@@ -150,13 +152,32 @@ class VideoCompositor:
             # Add last image again (FFmpeg concat requirement)
             f.write(f"file '{images[-1].absolute()}'\n")
         
-        # FFmpeg command to create video with zoompan effect
+        # Build FFmpeg video filter for Ken Burns effect
+        # 1. Scale and crop to target resolution
+        scale_filter = f"scale={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT}:force_original_aspect_ratio=increase"
+        crop_filter = f"crop={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT}"
+        
+        # 2. Ken Burns effect (slow zoom)
+        zoom_duration_frames = int(duration_per_image * Config.VIDEO_FPS)
+        zoom_filter = (
+            f"zoompan=z='min(zoom+0.0015,1.1)'"
+            f":d={zoom_duration_frames}"
+            f":x='iw/2-(iw/zoom/2)'"
+            f":y='ih/2-(ih/zoom/2)'"
+            f":s={Config.VIDEO_WIDTH}x{Config.VIDEO_HEIGHT}"
+            f":fps={Config.VIDEO_FPS}"
+        )
+        
+        # Combine filters
+        video_filter = f"{scale_filter},{crop_filter},{zoom_filter}"
+        
+        # FFmpeg command to create video with effects
         cmd = [
             "ffmpeg",
             "-f", "concat",
             "-safe", "0",
             "-i", str(concat_file),
-            "-vf", f"scale={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT},zoompan=z='min(zoom+0.0015,1.1)':d={int(duration_per_image * Config.VIDEO_FPS)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={Config.VIDEO_WIDTH}x{Config.VIDEO_HEIGHT}:fps={Config.VIDEO_FPS}",
+            "-vf", video_filter,
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", "23",
@@ -171,12 +192,14 @@ class VideoCompositor:
         if result.returncode != 0:
             # Fallback to simpler method without zoom effect
             print("Trying simpler slideshow method...")
+            simple_filter = f"{scale_filter},{crop_filter}"
+            
             cmd_simple = [
                 "ffmpeg",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", str(concat_file),
-                "-vf", f"scale={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT}",
+                "-vf", simple_filter,
                 "-c:v", "libx264",
                 "-preset", "medium",
                 "-crf", "23",
