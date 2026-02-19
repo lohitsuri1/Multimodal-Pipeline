@@ -12,6 +12,11 @@ jobs:
   generate-video:
     runs-on: ubuntu-latest
     
+    # Limit permissions for security
+    permissions:
+      contents: read
+      actions: read
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
