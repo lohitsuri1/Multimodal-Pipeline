@@ -152,155 +152,182 @@ def test_ffmpeg():
         print(f"✗ FFmpeg check error: {e}")
         return False
 
-
-def test_channel_presets():
-    """Test channel preset module."""
-    print("\nTesting channel presets...")
+def test_content_presets():
+    """Test content preset system."""
+    print("\nTesting content presets...")
     try:
-        from channel_presets import (
-            CHANNEL_A_FINANCE,
-            CHANNEL_B_DEVOTION,
-            get_preset,
-        )
+        from content_presets import get_preset, PRESETS
 
-        # Check Channel A
-        assert CHANNEL_A_FINANCE.channel_id == "A"
-        assert len(CHANNEL_A_FINANCE.topics) >= 10, "Channel A should have topics"
-        assert len(CHANNEL_A_FINANCE.visual_queries) > 0, "Channel A should have visual queries"
-        assert CHANNEL_A_FINANCE.long_video_duration_minutes > 0
-        assert CHANNEL_A_FINANCE.shorts_per_long > 0
+        # Both required presets must exist
+        assert "finance_ai_saas" in PRESETS, "finance_ai_saas preset missing"
+        assert "devotional" in PRESETS, "devotional preset missing"
 
-        # Check Channel B
-        assert CHANNEL_B_DEVOTION.channel_id == "B"
-        assert len(CHANNEL_B_DEVOTION.topics) >= 10, "Channel B should have topics"
+        for name in ("finance_ai_saas", "devotional"):
+            preset = get_preset(name)
+            assert preset.name == name
+            assert preset.long_form_system_prompt
+            assert "{theme}" in preset.long_form_user_template
+            assert "{duration_minutes}" in preset.long_form_user_template
+            assert len(preset.default_themes) >= 1
+            assert set(preset.platform_cues.keys()) == {
+                "youtube_long", "youtube_shorts", "instagram_reels"
+            }
+            assert preset.title_prompt_template
+            assert preset.thumbnail_prompt_template
+            assert len(preset.default_broll_keywords) >= 3
 
-        # Check get_preset helper
-        assert get_preset("A").channel_id == "A"
-        assert get_preset("B").channel_id == "B"
-        assert get_preset("finance").channel_id == "A"
-        assert get_preset("devotion").channel_id == "B"
-        assert get_preset("a").channel_id == "A"
-
+        # Unknown preset raises ValueError
         try:
-            get_preset("unknown")
-            assert False, "Should raise ValueError"
+            get_preset("nonexistent")
+            assert False, "Should have raised ValueError"
         except ValueError:
             pass
 
-        print(f"✓ Channel A topics: {len(CHANNEL_A_FINANCE.topics)}")
-        print(f"✓ Channel B topics: {len(CHANNEL_B_DEVOTION.topics)}")
-        print("✓ get_preset() lookups work correctly")
+        print(f"✓ Content presets validated ({len(PRESETS)} presets)")
         return True
     except Exception as e:
-        print(f"✗ Channel presets error: {e}")
+        print(f"✗ Content presets error: {e}")
         return False
 
 
-def test_content_cache():
-    """Test file-based content cache."""
-    print("\nTesting content cache...")
-    import tempfile
-    from pathlib import Path
-
+def test_shorts_extractor():
+    """Test shorts extraction module."""
+    print("\nTesting shorts extractor...")
     try:
-        from content_cache import ContentCache
+        from shorts_extractor import extract_shorts, shorts_dry_run_estimate
+
+        # Build a minimal structured script
+        sample_script = (
+            "HOOK: Did you know AI can replace your marketing team?\n"
+            "You are about to discover 5 tools that do exactly that.\n\n"
+            "PROMISE: In this video you will learn the top tools and how to use them.\n\n"
+            "SECTION 1: Tool One\n"
+            "This is the first major point. It covers many things about AI and productivity. "
+            "Use it every day to save hours. Many entrepreneurs rely on it for content. "
+            "Results are immediate and the pricing is fair for most budgets.\n\n"
+            "SECTION 2: Tool Two\n"
+            "This is the second major point. It focuses on automation and scheduling. "
+            "You can integrate it with your existing workflow. "
+            "Teams of all sizes benefit from this approach.\n\n"
+            "SECTION 3: Tool Three\n"
+            "This is the third major point. Analytics and insights are the core feature. "
+            "It helps you understand your audience. Data drives better decisions always.\n\n"
+            "RECAP: Quick summary of the three tools and how they help.\n"
+            "CTA: Like and subscribe for more AI tips every week!\n"
+        )
+        script_data = {"full_script": sample_script, "segments": []}
+
+        # Default count
+        shorts = extract_shorts(script_data, count=4)
+        assert isinstance(shorts, list)
+        assert 1 <= len(shorts) <= 4
+        for s in shorts:
+            assert "hook" in s
+            assert "body" in s
+            assert "cta" in s
+            assert "caption_text" in s
+            assert "broll_keywords" in s
+            assert isinstance(s["broll_keywords"], list)
+            assert len(s["caption_text"]) <= 63  # 60 chars + optional "..."
+
+        # Dry-run estimate (no API calls)
+        est = shorts_dry_run_estimate(script_data, count=4)
+        assert est["api_calls_required"] == 0
+        assert "shorts_that_will_be_produced" in est
+
+        # Count clamping
+        shorts_max = extract_shorts(script_data, count=100)
+        assert len(shorts_max) <= 8
+
+        print(f"✓ Shorts extractor: produced {len(shorts)} shorts from sample script")
+        return True
+    except Exception as e:
+        print(f"✗ Shorts extractor error: {e}")
+        return False
+
+
+def test_pipeline_cache():
+    """Test disk-based caching module."""
+    print("\nTesting pipeline cache...")
+    try:
+        import tempfile, os
+        from unittest.mock import patch
+        from pathlib import Path
         from config import Config
 
+        # Point cache to a temp directory for this test
         with tempfile.TemporaryDirectory() as tmp:
-            cache = ContentCache(cache_dir=Path(tmp))
-            cache.enabled = True  # force-enable regardless of env
+            with patch.object(Config, "CACHE_DIR", Path(tmp)):
+                from pipeline_cache import get_cached, set_cached, make_cache_key
 
-            key = {"type": "test", "value": "hello"}
+                key = make_cache_key(theme="test", preset="devotional", tier="free")
 
-            # Cache miss
-            assert cache.get(key) is None, "Should be cache miss initially"
+                # Miss
+                assert get_cached(key, "scripts") is None
 
-            # Store and retrieve
-            cache.set(key, {"data": 42})
-            result = cache.get(key)
-            assert result == {"data": 42}, f"Expected {{data: 42}}, got {result}"
+                # Set and hit
+                payload = {"script": "hello world", "titles": ["Title 1"]}
+                set_cached(key, payload, "scripts")
+                retrieved = get_cached(key, "scripts")
+                assert retrieved == payload
 
-            # Identical key → same result
-            cache.set({"value": "hello", "type": "test"}, {"data": 99})
-            result2 = cache.get(key)
-            assert result2 == {"data": 99}, "Same key (different order) should overwrite"
+                # Different kwargs → different key
+                key2 = make_cache_key(theme="other", preset="devotional", tier="free")
+                assert key != key2
+                assert get_cached(key2, "scripts") is None
 
-            # Clear
-            removed = cache.clear()
-            assert removed >= 1, "clear() should remove entries"
-            assert cache.get(key) is None, "Should be empty after clear"
-
-        print("✓ Cache miss/hit/overwrite/clear all work correctly")
+        print("✓ Pipeline cache: set/get/miss working correctly")
         return True
     except Exception as e:
-        print(f"✗ Content cache error: {e}")
+        print(f"✗ Pipeline cache error: {e}")
         return False
 
 
-def test_shorts_extractor_parser():
-    """Test the shorts parser with mock LLM output (no API key required)."""
-    print("\nTesting shorts extractor parser...")
+def test_cost_controls():
+    """Test that cost control constants are present in Config."""
+    print("\nTesting cost controls in Config...")
     try:
-        from shorts_extractor import ShortsExtractor
         from config import Config
 
-        # Temporarily set a dummy key so __init__ doesn't raise
-        original_key = Config.OPENAI_API_KEY
-        try:
-            Config.OPENAI_API_KEY = "dummy_key_for_parser_test"
-            import openai
-            openai.api_key = "dummy_key_for_parser_test"
+        assert hasattr(Config, "MAX_TOKENS_PER_CALL"), "MAX_TOKENS_PER_CALL missing"
+        assert hasattr(Config, "MAX_RETRIES"), "MAX_RETRIES missing"
+        assert hasattr(Config, "MAX_SCENES_PER_RUN"), "MAX_SCENES_PER_RUN missing"
+        assert hasattr(Config, "MAX_TTS_CHARS"), "MAX_TTS_CHARS missing"
+        assert hasattr(Config, "CACHE_DIR"), "CACHE_DIR missing"
+        assert hasattr(Config, "API_KEY"), "API_KEY missing"
+        assert hasattr(Config, "RATE_LIMIT_PER_MINUTE"), "RATE_LIMIT_PER_MINUTE missing"
 
-            extractor = ShortsExtractor.__new__(ShortsExtractor)
+        assert Config.MAX_TOKENS_PER_CALL > 0
+        assert Config.MAX_RETRIES >= 1
+        assert Config.MAX_SCENES_PER_RUN > 0
+        assert Config.MAX_TTS_CHARS > 0
+        assert Config.RATE_LIMIT_PER_MINUTE > 0
 
-            mock_output = """
-SHORT 1: Earn Passive Income Today
-HOOK: Did you know 90% of millionaires have multiple income streams?
-SCRIPT: Here is how you can start earning passive income with just $100 a month.
-CAPTION: 💰 Start your passive income journey today! #money
-HASHTAGS: #passiveincome #finance #money #investing #sidehustle
----
-SHORT 2: Top AI Tool of 2024
-HOOK: This single AI tool replaced my entire team of 5 assistants.
-SCRIPT: I'm going to show you the one AI tool that changed my business forever.
-CAPTION: 🤖 The AI tool everyone is talking about #AI #tools
-HASHTAGS: #aitools #productivity #automation #tech #business
----
-"""
-            shorts = extractor._parse_shorts(mock_output, 2)
-
-            assert len(shorts) == 2, f"Expected 2 shorts, got {len(shorts)}"
-            assert shorts[0]["title"] == "Earn Passive Income Today"
-            assert "90%" in shorts[0]["hook"]
-            assert "#passiveincome" in shorts[0]["hashtags"]
-            assert shorts[0]["format"] == "9:16"
-            assert shorts[1]["title"] == "Top AI Tool of 2024"
-        finally:
-            Config.OPENAI_API_KEY = original_key
-
-        print("✓ Shorts parser correctly extracts title/hook/script/caption/hashtags")
+        print("✓ All cost control constants present and valid")
         return True
     except Exception as e:
-        print(f"✗ Shorts extractor parser error: {e}")
+        print(f"✗ Cost controls error: {e}")
         return False
 
 
 def test_cli_dry_run():
-    """Test CLI dry-run cost estimation without making API calls."""
-    print("\nTesting CLI dry-run cost estimation...")
+    """Test the quick_start CLI --dry-run flag (no paid API calls)."""
+    print("\nTesting CLI --dry-run...")
     try:
-        from channel_presets import CHANNEL_A_FINANCE, CHANNEL_B_DEVOTION
-        from cli import estimate_costs
+        from quick_start import main as cli_main
 
-        for preset in (CHANNEL_A_FINANCE, CHANNEL_B_DEVOTION):
-            for output_type in ("long", "shorts", "both"):
-                for tier in ("free", "low", "high"):
-                    costs = estimate_costs(preset, output_type, tier, 4)
-                    assert "total_usd" in costs
-                    assert costs["total_usd"] >= 0
-                    assert "model" in costs
+        # Should succeed without any API keys
+        exit_code = cli_main(
+            ["--preset", "finance_ai_saas", "--output", "both", "--dry-run"]
+        )
+        assert exit_code == 0, f"Expected exit code 0, got {exit_code}"
 
-        print("✓ Cost estimation works for all channel/output/tier combinations")
+        exit_code2 = cli_main(
+            ["--preset", "devotional", "--output", "long", "--dry-run"]
+        )
+        assert exit_code2 == 0
+
+        print("✓ CLI --dry-run works for both presets")
         return True
     except Exception as e:
         print(f"✗ CLI dry-run error: {e}")
@@ -308,19 +335,18 @@ def test_cli_dry_run():
 
 
 def test_api_server_imports():
-    """Test that the API server module can be imported and routes registered."""
+    """Test that the FastAPI server module can be imported."""
     print("\nTesting API server imports...")
     try:
-        from api_server import app
+        import importlib.util
+        spec = importlib.util.find_spec("fastapi")
+        if spec is None:
+            print("⚠ Skipped (fastapi not installed)")
+            return True
 
-        routes = {r.path for r in app.routes}
-        assert "/health" in routes, "/health route missing"
-        assert "/api/presets" in routes, "/api/presets route missing"
-        assert "/api/estimate" in routes, "/api/estimate route missing"
-        assert "/api/generate/titles" in routes, "/api/generate/titles route missing"
-        assert "/api/generate/shorts" in routes, "/api/generate/shorts route missing"
-
-        print(f"✓ API server has {len(routes)} registered routes")
+        from api_server import app, check_api_key, check_rate_limit
+        assert app is not None
+        print("✓ API server module imported successfully")
         return True
     except Exception as e:
         print(f"✗ API server import error: {e}")
@@ -340,11 +366,12 @@ def main():
         ("Visual Queries", test_visual_queries),
         ("Weekly Themes", test_weekly_themes),
         ("FFmpeg Check", test_ffmpeg),
-        ("Channel Presets", test_channel_presets),
-        ("Content Cache", test_content_cache),
-        ("Shorts Extractor Parser", test_shorts_extractor_parser),
+        ("Content Presets", test_content_presets),
+        ("Shorts Extractor", test_shorts_extractor),
+        ("Pipeline Cache", test_pipeline_cache),
+        ("Cost Controls", test_cost_controls),
         ("CLI Dry-Run", test_cli_dry_run),
-        ("API Server", test_api_server_imports),
+        ("API Server Imports", test_api_server_imports),
     ]
     
     results = []

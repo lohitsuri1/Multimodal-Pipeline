@@ -39,6 +39,7 @@ temp_files/
 *.jpeg
 
 # Cache directory
+# Pipeline cache (disk-based cache to avoid re-billing)
 .cache/
 
 # IDE
@@ -59,3 +60,4 @@ htmlcov/
 
 # OS
 Thumbs.db
+

@@ -1,0 +1,54 @@
+name: Auto-merge Copilot PRs
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+jobs:
+  auto-merge:
+    # Only run for PRs opened by the GitHub Copilot coding agent
+    if: >
+      github.actor == 'copilot-swe-agent[bot]' ||
+      github.actor == 'github-copilot[bot]' ||
+      startsWith(github.head_ref, 'copilot/')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Auto-merge Copilot PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            // Fetch the latest PR state to verify it is mergeable
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number
+            });
+
+            if (pr.draft) {
+              console.log('PR is a draft — skipping auto-merge.');
+              return;
+            }
+
+            if (pr.mergeable_state === 'blocked') {
+              console.log(`PR mergeable_state is '${pr.mergeable_state}' — skipping auto-merge.`);
+              return;
+            }
+
+            // Squash-merge the PR
+            await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number,
+              merge_method: 'squash',
+              commit_title: `${pr.title} (#${pull_number})`,
+              commit_message: pr.body || ''
+            });

@@ -1,261 +1,226 @@
-"""Extract short-form video segments from long-form scripts."""
+"""Extract short-form videos from a long-form script.
+
+Input:  a structured script dict (as produced by the pipeline)
+Output: a list of short dicts, each ready for a YouTube Short or Instagram Reel.
+"""
+
+from __future__ import annotations
+
 import re
-import openai
-from typing import Any, Dict, List
-
-from config import Config
+from typing import Any, Dict, List, Optional
 
 
-class ShortsExtractor:
-    """Extract short segments from long-form scripts for YouTube Shorts / Instagram Reels."""
+# ---------------------------------------------------------------------------
+# Data helpers
+# ---------------------------------------------------------------------------
 
-    # Average spoken words per second (~130 wpm)
-    WORDS_PER_SECOND: float = 130 / 60
-    # Characters to keep from the long script when building the extraction prompt
-    SCRIPT_EXCERPT_CHARS: int = 4000
+def _split_into_sections(full_script: str) -> List[Dict[str, str]]:
+    """
+    Parse a long-form script into named sections.
 
-    def __init__(self):
-        """Initialize the shorts extractor."""
-        if not Config.OPENAI_API_KEY:
-            raise ValueError("OpenAI API key not configured")
-        openai.api_key = Config.OPENAI_API_KEY
+    Expects section headers in the form:
+        HOOK:          ...
+        PROMISE:       ...
+        SECTION N: Title
+        RECAP:         ...
+        CTA:           ...
+    Returns a list of {'title': str, 'content': str} dicts.
+    """
+    sections: List[Dict[str, str]] = []
+    current_title: Optional[str] = None
+    current_lines: List[str] = []
 
-    # ──────────────────────────────────────────
-    # Public API
-    # ──────────────────────────────────────────
+    header_re = re.compile(
+        r"^(HOOK|PROMISE|RECAP|CTA|SECTION\s+\d+)[\s:]+(.*)$", re.IGNORECASE
+    )
 
-    def extract_shorts(
-        self,
-        long_script: str,
-        num_shorts: int = 4,
-        max_duration_seconds: int = 60,
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract short video segments from a long-form script.
-
-        Args:
-            long_script: Full long-form script text.
-            num_shorts: Number of shorts to extract (1-8).
-            max_duration_seconds: Max duration of each short in seconds.
-
-        Returns:
-            List of short dicts with keys: title, hook, script, caption,
-            hashtags, format, max_duration_seconds.
-        """
-        num_shorts = min(max(num_shorts, 1), 8)
-        prompt = self._build_extraction_prompt(long_script, num_shorts, max_duration_seconds)
-
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a social media video specialist who extracts highly "
-                        "engaging short-form video segments from long-form scripts. "
-                        "You optimize for viewer retention and engagement."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.7,
-            max_tokens=min(Config.MAX_TOKENS, 3000),
-        )
-
-        raw = response.choices[0].message.content
-        return self._parse_shorts(raw, num_shorts)
-
-    def generate_titles_and_thumbnails(
-        self,
-        topic: str,
-        preset_system_prompt: str,
-        num_options: int = 3,
-    ) -> Dict[str, List[str]]:
-        """
-        Generate title and thumbnail text options for a video.
-
-        Args:
-            topic: Video topic/theme.
-            preset_system_prompt: System prompt for the channel preset.
-            num_options: Number of options to generate (default 3).
-
-        Returns:
-            Dict with 'titles' and 'thumbnails' lists.
-        """
-        prompt = (
-            f"Generate {num_options} title options and {num_options} thumbnail text "
-            f"options for a video about:\n\nTopic: {topic}\n\n"
-            "Requirements:\n"
-            "- Titles: Engaging, SEO-friendly, under 70 characters, include a benefit "
-            "or curiosity gap\n"
-            "- Thumbnail text: Short (3-7 words), high-contrast visual text that "
-            "complements the title\n\n"
-            f"Format your response as:\nTITLES:\n"
-            + "\n".join(f"{i}. [Title option {i}]" for i in range(1, num_options + 1))
-            + f"\n\nTHUMBNAILS:\n"
-            + "\n".join(
-                f"{i}. [Thumbnail text option {i}]" for i in range(1, num_options + 1)
-            )
-        )
-
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": preset_system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.8,
-            max_tokens=500,
-        )
-
-        raw = response.choices[0].message.content
-        return self._parse_titles_thumbnails(raw)
-
-    def estimate_cost(
-        self, long_script: str, num_shorts: int = 4
-    ) -> Dict[str, Any]:
-        """
-        Estimate API cost for shorts extraction without making API calls.
-
-        Args:
-            long_script: The long-form script.
-            num_shorts: Number of shorts to extract.
-
-        Returns:
-            Dict with cost breakdown.
-        """
-        # Rough token estimates: 1 token ~ 4 chars
-        input_tokens = len(long_script) // 4 + 500
-        output_tokens = num_shorts * 200
-
-        # GPT-3.5-turbo pricing (per 1 k tokens)
-        input_cost = (input_tokens / 1000) * 0.0015
-        output_cost = (output_tokens / 1000) * 0.002
-
-        return {
-            "model": "gpt-3.5-turbo",
-            "estimated_input_tokens": input_tokens,
-            "estimated_output_tokens": output_tokens,
-            "estimated_cost_usd": round(input_cost + output_cost, 4),
-        }
-
-    # ──────────────────────────────────────────
-    # Private helpers
-    # ──────────────────────────────────────────
-
-    def _build_extraction_prompt(
-        self, script: str, num_shorts: int, max_seconds: int
-    ) -> str:
-        max_words = int(max_seconds * self.WORDS_PER_SECOND)
-        # Limit input to avoid exceeding context window
-        script_excerpt = script[: self.SCRIPT_EXCERPT_CHARS]
-
-        return (
-            f"From the following long-form script, extract exactly {num_shorts} "
-            "short-form video segments.\n\n"
-            "Each short should:\n"
-            "- Be highly engaging and retain viewer attention within the first 3 seconds\n"
-            f"- Be approximately {max_words} words ({max_seconds} seconds when spoken)\n"
-            "- Work as a standalone video clip\n"
-            "- Be formatted for vertical 9:16 video (YouTube Shorts / Instagram Reels)\n"
-            "- Start with a strong hook\n\n"
-            "For each short, provide:\n"
-            "SHORT [N]: [Title]\n"
-            "HOOK: [First 1-2 sentences that grab attention]\n"
-            "SCRIPT: [Full narration script for the short]\n"
-            "CAPTION: [Social media caption with emojis, max 150 chars]\n"
-            "HASHTAGS: [5-8 relevant hashtags]\n"
-            "---\n\n"
-            f"LONG-FORM SCRIPT:\n{script_excerpt}\n\n"
-            f"Extract {num_shorts} shorts now:"
-        )
-
-    def _parse_shorts(self, raw: str, expected_count: int) -> List[Dict[str, Any]]:
-        """Parse raw LLM output into a list of structured short dicts."""
-        shorts = []
-        # Split on SHORT N: markers (case-insensitive)
-        blocks = re.split(r"(?i)SHORT\s+\d+\s*:", raw)
-        # Drop any leading text before the first SHORT marker
-        blocks = [b for b in blocks if b.strip()]
-
-        for block in blocks:
-            lines = block.strip().split("\n")
-            if not lines:
-                continue
-
-            title = lines[0].strip()
-            hook = ""
-            script_parts: List[str] = []
-            caption = ""
-            hashtags: List[str] = []
-            current_section = None
-
-            for line in lines[1:]:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                if stripped.upper().startswith("HOOK:"):
-                    current_section = "hook"
-                    hook = stripped[5:].strip()
-                elif stripped.upper().startswith("SCRIPT:"):
-                    current_section = "script"
-                    val = stripped[7:].strip()
-                    if val:
-                        script_parts = [val]
-                    else:
-                        script_parts = []
-                elif stripped.upper().startswith("CAPTION:"):
-                    current_section = "caption"
-                    caption = stripped[8:].strip()
-                elif stripped.upper().startswith("HASHTAGS:"):
-                    current_section = "hashtags"
-                    tag_text = stripped[9:].strip()
-                    hashtags = [t for t in tag_text.split() if t.startswith("#")]
-                elif stripped == "---":
-                    break
-                else:
-                    if current_section == "hook":
-                        hook += " " + stripped
-                    elif current_section == "script":
-                        script_parts.append(stripped)
-                    elif current_section == "caption":
-                        caption += " " + stripped
-
-            if title or script_parts:
-                shorts.append(
-                    {
-                        "title": title,
-                        "hook": hook.strip(),
-                        "script": " ".join(script_parts).strip(),
-                        "caption": caption.strip(),
-                        "hashtags": hashtags,
-                        "format": "9:16",
-                        "max_duration_seconds": 60,
-                    }
+    for line in full_script.splitlines():
+        stripped = line.strip()
+        m = header_re.match(stripped)
+        if m:
+            if current_title is not None:
+                sections.append(
+                    {"title": current_title, "content": "\n".join(current_lines).strip()}
                 )
+            label = m.group(1).upper()
+            extra = m.group(2).strip()
+            current_title = f"{label}: {extra}" if extra else label
+            current_lines = []
+        else:
+            if current_title is not None:
+                current_lines.append(stripped)
 
-        return shorts[:expected_count]
+    if current_title is not None and current_lines:
+        sections.append(
+            {"title": current_title, "content": "\n".join(current_lines).strip()}
+        )
 
-    def _parse_titles_thumbnails(self, raw: str) -> Dict[str, List[str]]:
-        """Parse title and thumbnail options from LLM response."""
-        titles: List[str] = []
-        thumbnails: List[str] = []
-        current_section = None
+    return sections
 
-        for line in raw.split("\n"):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            upper = stripped.upper()
-            if upper.startswith("TITLES:") or upper == "TITLES":
-                current_section = "titles"
-            elif upper.startswith("THUMBNAILS:") or upper == "THUMBNAILS":
-                current_section = "thumbnails"
-            elif stripped[0].isdigit() and ". " in stripped:
-                content = stripped.split(". ", 1)[1].strip()
-                if current_section == "titles":
-                    titles.append(content)
-                elif current_section == "thumbnails":
-                    thumbnails.append(content)
 
-        return {"titles": titles, "thumbnails": thumbnails}
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _first_sentence(text: str) -> str:
+    """Return the first sentence (up to ~150 chars) of a text block."""
+    for punct in (".", "!", "?"):
+        idx = text.find(punct)
+        if 0 < idx < 200:
+            return text[: idx + 1].strip()
+    return text[:150].strip()
+
+
+def _last_sentence(text: str) -> str:
+    """Return the last sentence of a text block."""
+    for punct in (".", "!", "?"):
+        idx = text.rfind(punct)
+        if idx > 0:
+            # Find start of that sentence
+            start = max(text.rfind(".", 0, idx - 1), text.rfind("!", 0, idx - 1),
+                        text.rfind("?", 0, idx - 1))
+            return text[start + 1: idx + 1].strip()
+    return text[-150:].strip()
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def extract_shorts(
+    script_data: Dict[str, Any],
+    count: int = 4,
+    preset=None,
+) -> List[Dict[str, Any]]:
+    """
+    Derive *count* shorts from a long-form script.
+
+    Parameters
+    ----------
+    script_data:
+        Dict produced by the pipeline with at least a ``full_script`` string
+        and optionally a ``segments`` list of ``{'title', 'content'}`` dicts.
+    count:
+        Number of shorts to produce (default 4; max capped at 8).
+    preset:
+        Optional ``ContentPreset`` object; used to inject shorts_guidance and
+        default b-roll keywords.
+
+    Returns
+    -------
+    List of dicts, each with:
+        - ``title``           : Short title derived from source section
+        - ``hook``            : First attention-grabbing sentence (≤ 150 chars)
+        - ``body``            : Core content, trimmed to ~60 s of narration (~120 words)
+        - ``cta``             : Call-to-action closing line
+        - ``caption_text``    : On-screen caption text (≤ 60 chars)
+        - ``broll_keywords``  : List[str] of suggested b-roll search terms
+        - ``source_section``  : Title of the originating section
+        - ``estimated_words`` : Word count of hook + body + CTA combined
+    """
+    count = min(max(1, count), 8)
+
+    # Prefer structured segments; fall back to full_script parsing
+    segments: List[Dict[str, str]] = script_data.get("segments") or []
+    if not segments:
+        segments = _split_into_sections(script_data.get("full_script", ""))
+
+    # Remove purely structural labels (HOOK, PROMISE, RECAP, CTA alone)
+    structural_labels = {"HOOK", "PROMISE", "RECAP", "CTA"}
+    content_sections = [
+        s for s in segments
+        if not any(s["title"].upper().startswith(lbl) for lbl in structural_labels)
+        and len(s["content"].split()) >= 30
+    ]
+
+    # If we don't have enough distinct content sections, fall back to all segments
+    if len(content_sections) < count:
+        content_sections = [s for s in segments if len(s["content"].split()) >= 20]
+
+    # Clamp count to what is available
+    count = min(count, len(content_sections))
+
+    # Spread selection evenly across available sections
+    if len(content_sections) > count:
+        step = len(content_sections) / count
+        indices = [int(i * step) for i in range(count)]
+        selected = [content_sections[i] for i in indices]
+    else:
+        selected = content_sections[:count]
+
+    # Pull b-roll keywords from preset or use defaults
+    if preset and hasattr(preset, "default_broll_keywords"):
+        broll_pool: List[str] = list(preset.default_broll_keywords)
+    else:
+        broll_pool = [
+            "relevant visual",
+            "concept illustration",
+            "close-up detail",
+            "wide establishing shot",
+            "person explaining",
+        ]
+
+    shorts: List[Dict[str, Any]] = []
+    for i, section in enumerate(selected):
+        content = section["content"]
+        words = content.split()
+
+        hook = _first_sentence(content)
+
+        # Body: up to ~120 words (roughly 60 s at average narration pace)
+        body_words = words[len(hook.split()): len(hook.split()) + 120]
+        body = " ".join(body_words).strip()
+        if not body:
+            body = content[len(hook):].strip()[:500]
+
+        cta = (
+            "Follow for more! Like and share if this helped you."
+            if not preset or preset.name == "finance_ai_saas"
+            else "Share this with someone who needs peace today. 🙏"
+        )
+
+        # Caption: first meaningful phrase, ≤ 60 chars
+        caption = hook[:57].rstrip() + "..." if len(hook) > 60 else hook
+
+        # Rotate through b-roll pool
+        broll = [broll_pool[(i * 2 + j) % len(broll_pool)] for j in range(3)]
+
+        total_words = _word_count(hook) + _word_count(body) + _word_count(cta)
+
+        shorts.append(
+            {
+                "title": f"Short {i + 1}: {section['title'][:50]}",
+                "hook": hook,
+                "body": body,
+                "cta": cta,
+                "caption_text": caption,
+                "broll_keywords": broll,
+                "source_section": section["title"],
+                "estimated_words": total_words,
+            }
+        )
+
+    return shorts
+
+
+def shorts_dry_run_estimate(
+    script_data: Dict[str, Any],
+    count: int = 4,
+) -> Dict[str, Any]:
+    """
+    Return an estimate of shorts extraction without generating content.
+
+    No API calls are made.
+    """
+    segments = script_data.get("segments") or _split_into_sections(
+        script_data.get("full_script", "")
+    )
+    full_script_word_count = _word_count(script_data.get("full_script", ""))
+    return {
+        "available_sections": len(segments),
+        "requested_shorts": count,
+        "shorts_that_will_be_produced": min(count, 8, len(segments)),
+        "source_script_words": full_script_word_count,
+        "estimated_total_short_words": min(count, 8) * 150,
+        "api_calls_required": 0,
+    }
