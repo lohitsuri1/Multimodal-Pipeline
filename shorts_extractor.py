@@ -224,3 +224,61 @@ def shorts_dry_run_estimate(
         "estimated_total_short_words": min(count, 8) * 150,
         "api_calls_required": 0,
     }
+
+
+class ShortsExtractor:
+    """Backward-compatible class wrapper used by the CLI."""
+
+    def extract_shorts(
+        self,
+        script: str,
+        num_shorts: int = 4,
+        preset=None,
+    ) -> List[Dict[str, Any]]:
+        script_data = {"full_script": script, "segments": []}
+        extracted = extract_shorts(script_data, count=num_shorts, preset=preset)
+
+        normalized: List[Dict[str, Any]] = []
+        for short in extracted:
+            title = short.get("title", "")
+            source_section = short.get("source_section", "")
+            caption_text = short.get("caption_text", "")
+
+            hashtags = ["#shorts", "#ai"]
+            if source_section:
+                first_word = source_section.split(":", 1)[0].strip().lower()
+                if first_word and first_word.isalpha():
+                    hashtags.append(f"#{first_word}")
+
+            normalized.append(
+                {
+                    **short,
+                    "title": title,
+                    "caption": caption_text,
+                    "hashtags": hashtags,
+                }
+            )
+
+        return normalized
+
+    def generate_titles_and_thumbnails(
+        self,
+        theme: str,
+        system_prompt: str = "",
+    ) -> Dict[str, List[str]]:
+        theme_clean = (theme or "this topic").strip()
+        titles = [
+            f"{theme_clean}: 5 Practical Insights",
+            f"What Most People Miss About {theme_clean}",
+            f"How to Get Results with {theme_clean}",
+            f"Beginner's Guide to {theme_clean}",
+            f"The Smart Way to Approach {theme_clean}",
+        ]
+        thumbnails = [
+            "DON'T MISS THIS",
+            "START HERE",
+            "DO THIS NOW",
+            "TOP 5 TIPS",
+            "GAME CHANGER",
+        ]
+        return {"titles": titles, "thumbnails": thumbnails}

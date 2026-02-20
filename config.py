@@ -40,10 +40,13 @@ class Config:
     # -----------------------------------------------------------------------
     # Cost controls
     # -----------------------------------------------------------------------
+    MAX_TOKENS = int(os.getenv("MAX_TOKENS", os.getenv("MAX_TOKENS_PER_CALL", "4000")))
     MAX_TOKENS_PER_CALL = int(os.getenv("MAX_TOKENS_PER_CALL", "4000"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+    MAX_IMAGES = int(os.getenv("MAX_IMAGES", os.getenv("MAX_SCENES_PER_RUN", "30")))
     MAX_SCENES_PER_RUN = int(os.getenv("MAX_SCENES_PER_RUN", "30"))
     MAX_TTS_CHARS = int(os.getenv("MAX_TTS_CHARS", "5000"))
+    ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").strip().lower() in {"1", "true", "yes", "on"}
     
     @classmethod
     def ensure_directories(cls):
