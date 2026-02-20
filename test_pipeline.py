@@ -356,12 +356,13 @@ def test_api_server_imports():
 def main():
     """Run all tests."""
     print("=" * 70)
-    print("🕉️  DEVOTIONAL PIPELINE - MODULE VALIDATION")
+    print("🎬  MULTIMODAL CONTENT PIPELINE - MODULE VALIDATION")
     print("=" * 70)
-    
+
     tests = [
         ("Module Imports", test_imports),
         ("Configuration", test_config),
+        ("Config Guardrails", test_config_guardrails),
         ("Music Handler", test_music_handler),
         ("Visual Queries", test_visual_queries),
         ("Weekly Themes", test_weekly_themes),
@@ -373,7 +374,7 @@ def main():
         ("CLI Dry-Run", test_cli_dry_run),
         ("API Server Imports", test_api_server_imports),
     ]
-    
+
     results = []
     for test_name, test_func in tests:
         try:
@@ -382,20 +383,20 @@ def main():
         except Exception as e:
             print(f"✗ Test failed with exception: {e}")
             results.append((test_name, False))
-    
+
     print("\n" + "=" * 70)
     print("TEST SUMMARY")
     print("=" * 70)
-    
+
     passed = sum(1 for _, result in results if result)
     total = len(results)
-    
+
     for test_name, result in results:
         status = "✓ PASS" if result else "✗ FAIL"
         print(f"{status}: {test_name}")
-    
+
     print(f"\nTotal: {passed}/{total} tests passed")
-    
+
     if passed == total:
         print("\n✨ All tests passed! Pipeline modules are ready.")
         print("\nNext steps:")

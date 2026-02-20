@@ -48,6 +48,129 @@ python quick_start.py --preset finance_ai_saas --output both --dry-run
 
 ---
 
+## 🎯 Content Strategy Presets (Monetizable Niches)
+
+Generate **retention-first YouTube scripts and shorts** for four profitable niches — each with a hook, promise, structured sections, and CTA baked in.
+
+| Niche | CLI key | Long-form | Shorts | Structure |
+|-------|---------|-----------|--------|-----------|
+| Finance | `finance` | 8 min | 6 | Hook → Strategy → Steps → Examples → Pitfalls → CTA |
+| AI & SaaS | `ai_saas` | 8 min | 7 | Demo hook → Promise → Features → Pricing → Tips → CTA |
+| Passive Income | `passive_income` | 9 min | 6 | Result hook → Why people fail → Opportunity → Steps → Scale |
+| Devotion | `devotion` | 30 min | 5 | Invocation → Teaching → Reflection → Meditation → Blessing |
+
+### Quick Start – CLI
+
+```bash
+# Dry run: estimate cost without calling any paid API
+python cli.py --niche finance --dry-run
+
+# Generate a long-form finance script (free tier)
+python cli.py --niche finance --output-type long
+
+# Generate both long + shorts for AI/SaaS, low-cost model
+python cli.py --niche ai_saas --output-type both --cost-tier low_cost
+
+# Custom theme
+python cli.py --niche passive_income --theme "How I Made $500/month with Digital Products"
+
+# List all niches
+python cli.py --list-niches
+
+# List all cost tiers with estimated prices
+python cli.py --list-tiers
+```
+
+### Quick Start – REST API
+
+```bash
+# Start the server
+uvicorn api:app --reload
+
+# Estimate cost (no paid API call)
+curl -X POST http://localhost:8000/estimate \
+  -H "Content-Type: application/json" \
+  -d '{"niche":"finance","output_type":"both","cost_tier":"free","dry_run":true}'
+
+# Generate scripts
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"niche":"finance","output_type":"both","cost_tier":"low_cost"}'
+
+# Browse interactive docs
+open http://localhost:8000/docs
+```
+
+---
+
+## 💰 Minimal Purchase Guidance
+
+### Decision Table
+
+| Tier | Cost / run | Script model | TTS | Images | Best for |
+|------|-----------|-------------|-----|--------|----------|
+| **free** | ~$0.00 | gpt-3.5-turbo | gTTS (free) | Pexels / Pixabay | Testing, prototyping |
+| **low_cost** | ~$0.02 | gpt-4o-mini | ElevenLabs starter (optional) | Pexels / Pixabay | Regular production |
+| **quality** | ~$0.20 | gpt-4o | ElevenLabs | Replicate gen | Hero / flagship content |
+
+### When to Upgrade Each Service
+
+**OpenAI (script generation)**
+- Start free with `gpt-3.5-turbo` — perfectly usable for all niches.
+- Upgrade to `gpt-4o-mini` (~$0.02/run) when you want noticeably better structure and tone.
+- Upgrade to `gpt-4o` only for premium/flagship content or client deliverables.
+- Get your key: https://platform.openai.com/api-keys
+
+**ElevenLabs (TTS — optional)**
+- Default is Google TTS (gTTS) — completely free, no sign-up needed.
+- Upgrade to ElevenLabs **Starter ($5/month)** when you need a natural, human-sounding voice.
+- Get your key: https://elevenlabs.io/
+
+**Replicate (image generation — optional)**
+- Default is Pexels + Pixabay (both free, no image generation costs).
+- Use Replicate only for the `quality` tier when you need custom AI-generated visuals.
+- Get your key: https://replicate.com/
+
+**Pexels / Pixabay (stock images — always free)**
+- Both APIs are free for commercial use within their limits.
+- Pexels: 200 requests/hour, 20 000/month — register at https://www.pexels.com/api/
+- Pixabay: 5 000 requests/hour — register at https://pixabay.com/api/docs/
+
+> **Rule of thumb:** start on `free`, publish a few videos, then upgrade only the service whose quality is visibly limiting your content.
+
+---
+
+## 🛡️ Cost Controls & Guardrails
+
+The pipeline includes several safeguards to prevent runaway API costs:
+
+| Guardrail | Default | Env var |
+|-----------|---------|---------|
+| Max tokens per request | 4 000 | `MAX_TOKENS` |
+| Max images per run | 40 | `MAX_IMAGES` |
+| Max TTS characters | 10 000 | `MAX_TTS_CHARS` |
+| Max API retries | 3 | `MAX_RETRIES` |
+| Script/TTS caching | enabled | `ENABLE_CACHE` |
+| API rate limit | 10/minute | `RATE_LIMIT` |
+| API basic auth | disabled | `API_USERNAME` / `API_PASSWORD` |
+
+**Caching** (`.cache/` directory) ensures that re-running the pipeline with the same niche + theme produces no additional API charges.
+
+**Dry run** estimates cost without calling any paid API:
+```bash
+python cli.py --niche finance --dry-run
+```
+
+**Rate limiting** on the FastAPI server prevents external abuse:
+```bash
+# In .env
+RATE_LIMIT=10/minute
+API_USERNAME=myuser
+API_PASSWORD=a_strong_password
+```
+
+
+
 ## 🚀 Original: 5-Level AI Roadmap
 
 This is a **complete implementation of the 5-Level AI Roadmap** that enables you to:

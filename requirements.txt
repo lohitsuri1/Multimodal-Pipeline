@@ -1,4 +1,4 @@
-# Core dependencies for devotional video pipeline
+# Core dependencies for the multimodal content pipeline
 openai>=1.0.0
 python-dotenv>=1.0.0
 pydub>=0.25.1
