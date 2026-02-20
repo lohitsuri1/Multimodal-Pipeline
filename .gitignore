@@ -38,6 +38,9 @@ temp_files/
 *.png
 *.jpeg
 
+# Cache directory
+.cache/
+
 # IDE
 .vscode/
 .idea/
