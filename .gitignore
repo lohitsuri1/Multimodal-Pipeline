@@ -38,6 +38,9 @@ temp_files/
 *.png
 *.jpeg
 
+# Pipeline cache (disk-based cache to avoid re-billing)
+.cache/
+
 # IDE
 .vscode/
 .idea/
@@ -56,3 +59,4 @@ htmlcov/
 
 # OS
 Thumbs.db
+

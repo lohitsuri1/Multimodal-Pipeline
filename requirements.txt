@@ -16,3 +16,7 @@ pyyaml>=6.0
 
 # Utilities
 tqdm>=4.66.0
+
+# API server
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
