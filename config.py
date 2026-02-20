@@ -1,4 +1,4 @@
-"""Configuration management for devotional video pipeline."""
+"""Configuration management for the multimodal content pipeline."""
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -7,56 +7,84 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    """Configuration class for devotional video generation."""
-    
+    """Configuration class for the content generation pipeline."""
+
     # Base directories
     BASE_DIR = Path(__file__).parent
     OUTPUT_DIR = BASE_DIR / os.getenv("OUTPUT_DIR", "output_videos")
     TEMP_DIR = BASE_DIR / os.getenv("TEMP_DIR", "temp_files")
-    
+    CACHE_DIR = BASE_DIR / os.getenv("CACHE_DIR", ".cache")
+
     # API Keys
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
     PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
-    
+
     # Video settings
     VIDEO_DURATION_MINUTES = int(os.getenv("VIDEO_DURATION_MINUTES", "30"))
     VIDEO_DURATION_SECONDS = VIDEO_DURATION_MINUTES * 60
     VIDEO_WIDTH = 1920
     VIDEO_HEIGHT = 1080
     VIDEO_FPS = 30
-    
+
     # Audio settings
     VOICE_LANGUAGE = os.getenv("VOICE_LANGUAGE", "en")
     VOICE_SPEED = float(os.getenv("VOICE_SPEED", "0.9"))
     MUSIC_VOLUME = float(os.getenv("MUSIC_VOLUME", "0.2"))
-    
+
+    # ------------------------------------------------------------------
+    # Cost guardrails – override via environment variables
+    # ------------------------------------------------------------------
+    # Default niche and cost tier
+    DEFAULT_NICHE = os.getenv("DEFAULT_NICHE", "devotion")
+    DEFAULT_COST_TIER = os.getenv("DEFAULT_COST_TIER", "free")
+
+    # OpenAI model (can be overridden; tier presets take precedence when
+    # a cost tier is active)
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+
+    # Hard caps – pipeline refuses to exceed these regardless of tier
+    MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4000"))
+    MAX_IMAGES = int(os.getenv("MAX_IMAGES", "40"))
+    MAX_TTS_CHARS = int(os.getenv("MAX_TTS_CHARS", "10000"))
+    MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+
+    # Caching (set ENABLE_CACHE=false to disable)
+    ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() != "false"
+
+    # API rate-limit / auth for the FastAPI server
+    RATE_LIMIT = os.getenv("RATE_LIMIT", "10/minute")
+    API_USERNAME = os.getenv("API_USERNAME", "")
+    API_PASSWORD = os.getenv("API_PASSWORD", "")
+
     @classmethod
     def ensure_directories(cls):
         """Create necessary directories if they don't exist."""
         cls.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.TEMP_DIR.mkdir(parents=True, exist_ok=True)
-    
+        if cls.ENABLE_CACHE:
+            cls.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
     @classmethod
     def validate_config(cls):
         """Validate required configuration."""
         errors = []
-        
+
         if not cls.OPENAI_API_KEY:
             errors.append("OPENAI_API_KEY is not set in .env file")
-        
+
         # PEXELS or PIXABAY key is needed for visuals
         if not cls.PEXELS_API_KEY and not cls.PIXABAY_API_KEY:
             errors.append("Either PEXELS_API_KEY or PIXABAY_API_KEY must be set in .env file")
-        
+
         if errors:
             raise ValueError(
                 "Configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
             )
-        
+
         return True
-    
+
     @classmethod
     def get_api_keys(cls):
         """Return dictionary of available API keys."""
@@ -65,4 +93,15 @@ class Config:
             "elevenlabs": cls.ELEVENLABS_API_KEY,
             "pexels": cls.PEXELS_API_KEY,
             "pixabay": cls.PIXABAY_API_KEY,
+        }
+
+    @classmethod
+    def get_guardrails(cls) -> dict:
+        """Return active cost-guardrail settings."""
+        return {
+            "max_tokens": cls.MAX_TOKENS,
+            "max_images": cls.MAX_IMAGES,
+            "max_tts_chars": cls.MAX_TTS_CHARS,
+            "max_retries": cls.MAX_RETRIES,
+            "enable_cache": cls.ENABLE_CACHE,
         }

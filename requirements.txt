@@ -1,4 +1,4 @@
-# Core dependencies for devotional video pipeline
+# Core dependencies for the multimodal content pipeline
 openai>=1.0.0
 python-dotenv>=1.0.0
 pydub>=0.25.1
@@ -16,3 +16,8 @@ pyyaml>=6.0
 
 # Utilities
 tqdm>=4.66.0
+
+# FastAPI server (rate limiting + optional auth)
+fastapi>=0.115.0
+uvicorn>=0.32.0
+slowapi>=0.1.9

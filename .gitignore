@@ -38,6 +38,9 @@ temp_files/
 *.png
 *.jpeg
 
+# Pipeline cache (avoids re-billing; safe to delete to force a fresh run)
+.cache/
+
 # IDE
 .vscode/
 .idea/

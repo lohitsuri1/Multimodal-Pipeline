@@ -139,21 +139,184 @@ def test_ffmpeg():
         print(f"✗ FFmpeg check error: {e}")
         return False
 
+def test_presets():
+    """Smoke test for content strategy presets."""
+    print("\nTesting content strategy presets...")
+    try:
+        from presets import (
+            NICHE_PRESETS, COST_TIERS, OUTPUT_FORMATS,
+            get_preset, get_cost_tier, list_niches, list_tiers,
+        )
+
+        # All four niches must be present
+        for niche in ("finance", "ai_saas", "passive_income", "devotion"):
+            assert niche in NICHE_PRESETS, f"Missing niche: {niche}"
+            p = get_preset(niche)
+            assert "long_form" in p, f"{niche}: missing long_form"
+            assert "shorts" in p, f"{niche}: missing shorts"
+            assert "themes" in p, f"{niche}: missing themes"
+            assert len(p["themes"]) >= 5, f"{niche}: too few themes"
+            assert "packaging" in p, f"{niche}: missing packaging"
+
+        # devotion preset preserves the original 12 themes
+        devotion_themes = get_preset("devotion")["themes"]
+        assert len(devotion_themes) == 12, "Devotion preset should have 12 themes"
+
+        # Cost tiers
+        for tier in ("free", "low_cost", "quality"):
+            t = get_cost_tier(tier)
+            assert "script_model" in t
+            assert "max_tokens" in t
+
+        # Output formats
+        for fmt in ("long", "shorts", "both"):
+            assert fmt in OUTPUT_FORMATS
+
+        # list helpers
+        assert set(list_niches()) == set(NICHE_PRESETS.keys())
+        assert set(list_tiers()) == set(COST_TIERS.keys())
+
+        print(f"✓ {len(NICHE_PRESETS)} niche presets validated")
+        print(f"✓ {len(COST_TIERS)} cost tiers validated")
+        return True
+    except Exception as e:
+        print(f"✗ Presets error: {e}")
+        return False
+
+
+def test_cache_manager():
+    """Smoke test for the CacheManager."""
+    print("\nTesting cache manager...")
+    try:
+        import tempfile
+        from cache_manager import CacheManager
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = CacheManager(cache_dir=tmpdir)
+
+            # JSON round-trip
+            inputs = {"niche": "finance", "theme": "budgeting", "model": "gpt-3.5-turbo"}
+            value = {"full_script": "Hello world", "sections": []}
+            cache.set(inputs, value, namespace="scripts")
+            retrieved = cache.get(inputs, namespace="scripts")
+            assert retrieved == value, "Cache get/set mismatch"
+
+            # Different inputs → cache miss
+            miss = cache.get({"niche": "other"}, namespace="scripts")
+            assert miss is None, "Expected cache miss"
+
+            # TTS path helpers
+            from pathlib import Path
+            tts_path = cache.get_tts_cache_path("test text", {"lang": "en"})
+            assert isinstance(tts_path, Path)
+            assert tts_path.parent.exists()
+
+            # stats
+            stats = cache.stats()
+            assert "scripts" in stats
+
+        print("✓ CacheManager get/set/miss/tts-path/stats work correctly")
+        return True
+    except Exception as e:
+        print(f"✗ CacheManager error: {e}")
+        return False
+
+
+def test_cost_estimator():
+    """Smoke test for dry-run cost estimation."""
+    print("\nTesting cost estimator (dry run)...")
+    try:
+        from script_generator import ContentScriptGenerator
+
+        for niche in ("finance", "devotion", "passive_income"):
+            gen = ContentScriptGenerator(
+                niche=niche,
+                cost_tier="free",
+                output_format="both",
+                dry_run=True,
+            )
+            est = gen.estimate_cost()
+            assert "estimated_cost_usd" in est
+            assert est["estimated_cost_usd"] >= 0
+            assert "model" in est
+            assert "estimated_output_tokens" in est
+
+            # generate() in dry_run should also return an estimate (no API call)
+            result = gen.generate()
+            assert "estimated_cost_usd" in result
+            assert result.get("dry_run") is True
+
+        print("✓ Cost estimator returns valid estimates for all niches")
+        return True
+    except Exception as e:
+        print(f"✗ Cost estimator error: {e}")
+        return False
+
+
+def test_cli_dry_run():
+    """Smoke test for CLI dry-run mode (no API calls)."""
+    print("\nTesting CLI dry-run...")
+    try:
+        from cli import main as cli_main
+
+        for niche in ("finance", "ai_saas", "passive_income", "devotion"):
+            ret = cli_main(["--niche", niche, "--dry-run", "--output-type", "both"])
+            assert ret == 0, f"CLI dry-run failed for niche {niche}"
+
+        # --list-niches and --list-tiers should exit 0
+        assert cli_main(["--list-niches"]) == 0
+        assert cli_main(["--list-tiers"]) == 0
+
+        print("✓ CLI dry-run and listing commands work for all niches")
+        return True
+    except Exception as e:
+        print(f"✗ CLI error: {e}")
+        return False
+
+
+def test_config_guardrails():
+    """Smoke test for Config guardrail attributes."""
+    print("\nTesting config guardrails...")
+    try:
+        from config import Config
+
+        guardrails = Config.get_guardrails()
+        for key in ("max_tokens", "max_images", "max_tts_chars", "max_retries", "enable_cache"):
+            assert key in guardrails, f"Missing guardrail: {key}"
+
+        assert Config.MAX_TOKENS > 0
+        assert Config.MAX_IMAGES > 0
+        assert Config.MAX_TTS_CHARS > 0
+        assert Config.DEFAULT_NICHE in ("devotion", "finance", "ai_saas", "passive_income")
+        assert Config.DEFAULT_COST_TIER in ("free", "low_cost", "quality")
+
+        print("✓ Config guardrails present and valid")
+        return True
+    except Exception as e:
+        print(f"✗ Config guardrails error: {e}")
+        return False
+
+
 def main():
     """Run all tests."""
     print("=" * 70)
-    print("🕉️  DEVOTIONAL PIPELINE - MODULE VALIDATION")
+    print("🎬  MULTIMODAL CONTENT PIPELINE - MODULE VALIDATION")
     print("=" * 70)
-    
+
     tests = [
         ("Module Imports", test_imports),
         ("Configuration", test_config),
+        ("Config Guardrails", test_config_guardrails),
         ("Music Handler", test_music_handler),
         ("Visual Queries", test_visual_queries),
         ("Weekly Themes", test_weekly_themes),
         ("FFmpeg Check", test_ffmpeg),
+        ("Content Presets", test_presets),
+        ("Cache Manager", test_cache_manager),
+        ("Cost Estimator", test_cost_estimator),
+        ("CLI Dry Run", test_cli_dry_run),
     ]
-    
+
     results = []
     for test_name, test_func in tests:
         try:
@@ -162,26 +325,27 @@ def main():
         except Exception as e:
             print(f"✗ Test failed with exception: {e}")
             results.append((test_name, False))
-    
+
     print("\n" + "=" * 70)
     print("TEST SUMMARY")
     print("=" * 70)
-    
+
     passed = sum(1 for _, result in results if result)
     total = len(results)
-    
+
     for test_name, result in results:
         status = "✓ PASS" if result else "✗ FAIL"
         print(f"{status}: {test_name}")
-    
+
     print(f"\nTotal: {passed}/{total} tests passed")
-    
+
     if passed == total:
         print("\n✨ All tests passed! Pipeline modules are ready.")
         print("\nNext steps:")
         print("  1. Copy .env.example to .env")
         print("  2. Add your API keys to .env")
-        print("  3. Run: python devotional_pipeline.py")
+        print("  3. Run: python cli.py --niche finance --dry-run")
+        print("  4. Run: python devotional_pipeline.py")
         return 0
     else:
         print("\n⚠️  Some tests failed. Please fix issues before running pipeline.")
