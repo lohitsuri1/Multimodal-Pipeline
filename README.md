@@ -6,7 +6,33 @@
 ![Status](https://img.shields.io/badge/status-production--ready-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)
 
-## 🕉️ NEW: Devotional Video Automation Pipeline
+## 🚀 NEW: Faceless Content Pipeline (Two Channels)
+
+**Generate 2 long videos + 8 shorts per week for YouTube & Instagram — fully automated!**
+
+🎯 **Features:**
+- ✅ Two channel presets: **Finance/AI/SaaS** and **Devotional/Spirituality**
+- ✅ Retention-first long-form scripts (hook → promise → sections → recap → CTA)
+- ✅ Automatic shorts extraction (4–8 shorts per long video)
+- ✅ Packaging: 3 title options + 3 thumbnail texts per video
+- ✅ Platform cues for YouTube Long, YouTube Shorts, and Instagram Reels (9:16)
+- ✅ Disk-based caching — no re-billing on repeated runs
+- ✅ `--dry-run` mode to estimate costs before hitting paid APIs
+- ✅ FastAPI server with optional API-key auth and rate limiting
+
+```bash
+# Generate a full long video + 4 shorts for the Finance/AI channel
+python quick_start.py --preset finance_ai_saas --output both --tier free
+
+# Estimate usage first (no paid API calls)
+python quick_start.py --preset finance_ai_saas --output both --dry-run
+```
+
+📖 **[→ Faceless Content Guide (FACELESS_CONTENT.md)](FACELESS_CONTENT.md)**
+
+---
+
+## 🕉️ Devotional Video Automation Pipeline
 
 **Generate 30-minute Radha Krishna devotional videos automatically every week!**
 

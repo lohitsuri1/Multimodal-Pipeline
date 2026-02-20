@@ -12,6 +12,9 @@ def test_imports():
         from visual_assets import VisualAssetFetcher
         from music_handler import BackgroundMusicHandler
         from video_compositor import VideoCompositor
+        from channel_presets import get_preset, CHANNEL_A_FINANCE, CHANNEL_B_DEVOTION
+        from shorts_extractor import ShortsExtractor
+        from content_cache import ContentCache
         print("✓ All modules imported successfully")
         return True
     except Exception as e:
@@ -35,11 +38,21 @@ def test_config():
         assert Config.VIDEO_DURATION_MINUTES == 30, "Duration should be 30 minutes"
         assert Config.VIDEO_WIDTH == 1920, "Width should be 1920"
         assert Config.VIDEO_HEIGHT == 1080, "Height should be 1080"
+
+        # New cost/safety controls
+        assert Config.MAX_TOKENS > 0, "MAX_TOKENS should be positive"
+        assert Config.MAX_RETRIES > 0, "MAX_RETRIES should be positive"
+        assert Config.MAX_IMAGES > 0, "MAX_IMAGES should be positive"
+        assert Config.MAX_TTS_CHARS > 0, "MAX_TTS_CHARS should be positive"
+        assert isinstance(Config.ENABLE_CACHE, bool), "ENABLE_CACHE should be bool"
+        assert Config.RATE_LIMIT_PER_MINUTE > 0, "RATE_LIMIT_PER_MINUTE should be positive"
         
         print("✓ Configuration working correctly")
         print(f"  Output dir: {Config.OUTPUT_DIR}")
         print(f"  Temp dir: {Config.TEMP_DIR}")
         print(f"  Duration: {Config.VIDEO_DURATION_MINUTES} minutes")
+        print(f"  MAX_TOKENS: {Config.MAX_TOKENS}")
+        print(f"  ENABLE_CACHE: {Config.ENABLE_CACHE}")
         return True
     except Exception as e:
         print(f"✗ Config error: {e}")
@@ -139,161 +152,204 @@ def test_ffmpeg():
         print(f"✗ FFmpeg check error: {e}")
         return False
 
-def test_presets():
-    """Smoke test for content strategy presets."""
-    print("\nTesting content strategy presets...")
+def test_content_presets():
+    """Test content preset system."""
+    print("\nTesting content presets...")
     try:
-        from presets import (
-            NICHE_PRESETS, COST_TIERS, OUTPUT_FORMATS,
-            get_preset, get_cost_tier, list_niches, list_tiers,
+        from content_presets import get_preset, PRESETS
+
+        # Both required presets must exist
+        assert "finance_ai_saas" in PRESETS, "finance_ai_saas preset missing"
+        assert "devotional" in PRESETS, "devotional preset missing"
+
+        for name in ("finance_ai_saas", "devotional"):
+            preset = get_preset(name)
+            assert preset.name == name
+            assert preset.long_form_system_prompt
+            assert "{theme}" in preset.long_form_user_template
+            assert "{duration_minutes}" in preset.long_form_user_template
+            assert len(preset.default_themes) >= 1
+            assert set(preset.platform_cues.keys()) == {
+                "youtube_long", "youtube_shorts", "instagram_reels"
+            }
+            assert preset.title_prompt_template
+            assert preset.thumbnail_prompt_template
+            assert len(preset.default_broll_keywords) >= 3
+
+        # Unknown preset raises ValueError
+        try:
+            get_preset("nonexistent")
+            assert False, "Should have raised ValueError"
+        except ValueError:
+            pass
+
+        print(f"✓ Content presets validated ({len(PRESETS)} presets)")
+        return True
+    except Exception as e:
+        print(f"✗ Content presets error: {e}")
+        return False
+
+
+def test_shorts_extractor():
+    """Test shorts extraction module."""
+    print("\nTesting shorts extractor...")
+    try:
+        from shorts_extractor import extract_shorts, shorts_dry_run_estimate
+
+        # Build a minimal structured script
+        sample_script = (
+            "HOOK: Did you know AI can replace your marketing team?\n"
+            "You are about to discover 5 tools that do exactly that.\n\n"
+            "PROMISE: In this video you will learn the top tools and how to use them.\n\n"
+            "SECTION 1: Tool One\n"
+            "This is the first major point. It covers many things about AI and productivity. "
+            "Use it every day to save hours. Many entrepreneurs rely on it for content. "
+            "Results are immediate and the pricing is fair for most budgets.\n\n"
+            "SECTION 2: Tool Two\n"
+            "This is the second major point. It focuses on automation and scheduling. "
+            "You can integrate it with your existing workflow. "
+            "Teams of all sizes benefit from this approach.\n\n"
+            "SECTION 3: Tool Three\n"
+            "This is the third major point. Analytics and insights are the core feature. "
+            "It helps you understand your audience. Data drives better decisions always.\n\n"
+            "RECAP: Quick summary of the three tools and how they help.\n"
+            "CTA: Like and subscribe for more AI tips every week!\n"
         )
+        script_data = {"full_script": sample_script, "segments": []}
 
-        # All four niches must be present
-        for niche in ("finance", "ai_saas", "passive_income", "devotion"):
-            assert niche in NICHE_PRESETS, f"Missing niche: {niche}"
-            p = get_preset(niche)
-            assert "long_form" in p, f"{niche}: missing long_form"
-            assert "shorts" in p, f"{niche}: missing shorts"
-            assert "themes" in p, f"{niche}: missing themes"
-            assert len(p["themes"]) >= 5, f"{niche}: too few themes"
-            assert "packaging" in p, f"{niche}: missing packaging"
+        # Default count
+        shorts = extract_shorts(script_data, count=4)
+        assert isinstance(shorts, list)
+        assert 1 <= len(shorts) <= 4
+        for s in shorts:
+            assert "hook" in s
+            assert "body" in s
+            assert "cta" in s
+            assert "caption_text" in s
+            assert "broll_keywords" in s
+            assert isinstance(s["broll_keywords"], list)
+            assert len(s["caption_text"]) <= 63  # 60 chars + optional "..."
 
-        # devotion preset preserves the original 12 themes
-        devotion_themes = get_preset("devotion")["themes"]
-        assert len(devotion_themes) == 12, "Devotion preset should have 12 themes"
+        # Dry-run estimate (no API calls)
+        est = shorts_dry_run_estimate(script_data, count=4)
+        assert est["api_calls_required"] == 0
+        assert "shorts_that_will_be_produced" in est
 
-        # Cost tiers
-        for tier in ("free", "low_cost", "quality"):
-            t = get_cost_tier(tier)
-            assert "script_model" in t
-            assert "max_tokens" in t
+        # Count clamping
+        shorts_max = extract_shorts(script_data, count=100)
+        assert len(shorts_max) <= 8
 
-        # Output formats
-        for fmt in ("long", "shorts", "both"):
-            assert fmt in OUTPUT_FORMATS
-
-        # list helpers
-        assert set(list_niches()) == set(NICHE_PRESETS.keys())
-        assert set(list_tiers()) == set(COST_TIERS.keys())
-
-        print(f"✓ {len(NICHE_PRESETS)} niche presets validated")
-        print(f"✓ {len(COST_TIERS)} cost tiers validated")
+        print(f"✓ Shorts extractor: produced {len(shorts)} shorts from sample script")
         return True
     except Exception as e:
-        print(f"✗ Presets error: {e}")
+        print(f"✗ Shorts extractor error: {e}")
         return False
 
 
-def test_cache_manager():
-    """Smoke test for the CacheManager."""
-    print("\nTesting cache manager...")
+def test_pipeline_cache():
+    """Test disk-based caching module."""
+    print("\nTesting pipeline cache...")
     try:
-        import tempfile
-        from cache_manager import CacheManager
+        import tempfile, os
+        from unittest.mock import patch
+        from pathlib import Path
+        from config import Config
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache = CacheManager(cache_dir=tmpdir)
+        # Point cache to a temp directory for this test
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(Config, "CACHE_DIR", Path(tmp)):
+                from pipeline_cache import get_cached, set_cached, make_cache_key
 
-            # JSON round-trip
-            inputs = {"niche": "finance", "theme": "budgeting", "model": "gpt-3.5-turbo"}
-            value = {"full_script": "Hello world", "sections": []}
-            cache.set(inputs, value, namespace="scripts")
-            retrieved = cache.get(inputs, namespace="scripts")
-            assert retrieved == value, "Cache get/set mismatch"
+                key = make_cache_key(theme="test", preset="devotional", tier="free")
 
-            # Different inputs → cache miss
-            miss = cache.get({"niche": "other"}, namespace="scripts")
-            assert miss is None, "Expected cache miss"
+                # Miss
+                assert get_cached(key, "scripts") is None
 
-            # TTS path helpers
-            from pathlib import Path
-            tts_path = cache.get_tts_cache_path("test text", {"lang": "en"})
-            assert isinstance(tts_path, Path)
-            assert tts_path.parent.exists()
+                # Set and hit
+                payload = {"script": "hello world", "titles": ["Title 1"]}
+                set_cached(key, payload, "scripts")
+                retrieved = get_cached(key, "scripts")
+                assert retrieved == payload
 
-            # stats
-            stats = cache.stats()
-            assert "scripts" in stats
+                # Different kwargs → different key
+                key2 = make_cache_key(theme="other", preset="devotional", tier="free")
+                assert key != key2
+                assert get_cached(key2, "scripts") is None
 
-        print("✓ CacheManager get/set/miss/tts-path/stats work correctly")
+        print("✓ Pipeline cache: set/get/miss working correctly")
         return True
     except Exception as e:
-        print(f"✗ CacheManager error: {e}")
+        print(f"✗ Pipeline cache error: {e}")
         return False
 
 
-def test_cost_estimator():
-    """Smoke test for dry-run cost estimation."""
-    print("\nTesting cost estimator (dry run)...")
+def test_cost_controls():
+    """Test that cost control constants are present in Config."""
+    print("\nTesting cost controls in Config...")
     try:
-        from script_generator import ContentScriptGenerator
+        from config import Config
 
-        for niche in ("finance", "devotion", "passive_income"):
-            gen = ContentScriptGenerator(
-                niche=niche,
-                cost_tier="free",
-                output_format="both",
-                dry_run=True,
-            )
-            est = gen.estimate_cost()
-            assert "estimated_cost_usd" in est
-            assert est["estimated_cost_usd"] >= 0
-            assert "model" in est
-            assert "estimated_output_tokens" in est
+        assert hasattr(Config, "MAX_TOKENS_PER_CALL"), "MAX_TOKENS_PER_CALL missing"
+        assert hasattr(Config, "MAX_RETRIES"), "MAX_RETRIES missing"
+        assert hasattr(Config, "MAX_SCENES_PER_RUN"), "MAX_SCENES_PER_RUN missing"
+        assert hasattr(Config, "MAX_TTS_CHARS"), "MAX_TTS_CHARS missing"
+        assert hasattr(Config, "CACHE_DIR"), "CACHE_DIR missing"
+        assert hasattr(Config, "API_KEY"), "API_KEY missing"
+        assert hasattr(Config, "RATE_LIMIT_PER_MINUTE"), "RATE_LIMIT_PER_MINUTE missing"
 
-            # generate() in dry_run should also return an estimate (no API call)
-            result = gen.generate()
-            assert "estimated_cost_usd" in result
-            assert result.get("dry_run") is True
+        assert Config.MAX_TOKENS_PER_CALL > 0
+        assert Config.MAX_RETRIES >= 1
+        assert Config.MAX_SCENES_PER_RUN > 0
+        assert Config.MAX_TTS_CHARS > 0
+        assert Config.RATE_LIMIT_PER_MINUTE > 0
 
-        print("✓ Cost estimator returns valid estimates for all niches")
+        print("✓ All cost control constants present and valid")
         return True
     except Exception as e:
-        print(f"✗ Cost estimator error: {e}")
+        print(f"✗ Cost controls error: {e}")
         return False
 
 
 def test_cli_dry_run():
-    """Smoke test for CLI dry-run mode (no API calls)."""
-    print("\nTesting CLI dry-run...")
+    """Test the quick_start CLI --dry-run flag (no paid API calls)."""
+    print("\nTesting CLI --dry-run...")
     try:
-        from cli import main as cli_main
+        from quick_start import main as cli_main
 
-        for niche in ("finance", "ai_saas", "passive_income", "devotion"):
-            ret = cli_main(["--niche", niche, "--dry-run", "--output-type", "both"])
-            assert ret == 0, f"CLI dry-run failed for niche {niche}"
+        # Should succeed without any API keys
+        exit_code = cli_main(
+            ["--preset", "finance_ai_saas", "--output", "both", "--dry-run"]
+        )
+        assert exit_code == 0, f"Expected exit code 0, got {exit_code}"
 
-        # --list-niches and --list-tiers should exit 0
-        assert cli_main(["--list-niches"]) == 0
-        assert cli_main(["--list-tiers"]) == 0
+        exit_code2 = cli_main(
+            ["--preset", "devotional", "--output", "long", "--dry-run"]
+        )
+        assert exit_code2 == 0
 
-        print("✓ CLI dry-run and listing commands work for all niches")
+        print("✓ CLI --dry-run works for both presets")
         return True
     except Exception as e:
-        print(f"✗ CLI error: {e}")
+        print(f"✗ CLI dry-run error: {e}")
         return False
 
 
-def test_config_guardrails():
-    """Smoke test for Config guardrail attributes."""
-    print("\nTesting config guardrails...")
+def test_api_server_imports():
+    """Test that the FastAPI server module can be imported."""
+    print("\nTesting API server imports...")
     try:
-        from config import Config
+        import importlib.util
+        spec = importlib.util.find_spec("fastapi")
+        if spec is None:
+            print("⚠ Skipped (fastapi not installed)")
+            return True
 
-        guardrails = Config.get_guardrails()
-        for key in ("max_tokens", "max_images", "max_tts_chars", "max_retries", "enable_cache"):
-            assert key in guardrails, f"Missing guardrail: {key}"
-
-        assert Config.MAX_TOKENS > 0
-        assert Config.MAX_IMAGES > 0
-        assert Config.MAX_TTS_CHARS > 0
-        assert Config.DEFAULT_NICHE in ("devotion", "finance", "ai_saas", "passive_income")
-        assert Config.DEFAULT_COST_TIER in ("free", "low_cost", "quality")
-
-        print("✓ Config guardrails present and valid")
+        from api_server import app, check_api_key, check_rate_limit
+        assert app is not None
+        print("✓ API server module imported successfully")
         return True
     except Exception as e:
-        print(f"✗ Config guardrails error: {e}")
+        print(f"✗ API server import error: {e}")
         return False
 
 
@@ -311,10 +367,12 @@ def main():
         ("Visual Queries", test_visual_queries),
         ("Weekly Themes", test_weekly_themes),
         ("FFmpeg Check", test_ffmpeg),
-        ("Content Presets", test_presets),
-        ("Cache Manager", test_cache_manager),
-        ("Cost Estimator", test_cost_estimator),
-        ("CLI Dry Run", test_cli_dry_run),
+        ("Content Presets", test_content_presets),
+        ("Shorts Extractor", test_shorts_extractor),
+        ("Pipeline Cache", test_pipeline_cache),
+        ("Cost Controls", test_cost_controls),
+        ("CLI Dry-Run", test_cli_dry_run),
+        ("API Server Imports", test_api_server_imports),
     ]
 
     results = []
@@ -344,8 +402,8 @@ def main():
         print("\nNext steps:")
         print("  1. Copy .env.example to .env")
         print("  2. Add your API keys to .env")
-        print("  3. Run: python cli.py --niche finance --dry-run")
-        print("  4. Run: python devotional_pipeline.py")
+        print("  3. Run: python cli.py --channel B --output both  (devotion)")
+        print("         python cli.py --channel A --output both  (finance)")
         return 0
     else:
         print("\n⚠️  Some tests failed. Please fix issues before running pipeline.")

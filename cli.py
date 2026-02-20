@@ -1,238 +1,413 @@
-"""CLI entry point for the Multimodal Content Pipeline.
+"""CLI entry point for the Multimodal Pipeline.
 
-Usage examples:
+Usage examples
+--------------
+  # Dry-run cost estimate for Channel A (finance), both long + shorts:
+  python cli.py --channel A --output both --dry-run
 
-  # Devotional video (default, free tier)
-  python cli.py
+  # Generate Channel B devotional long video (current week's theme):
+  python cli.py --channel B --output long
 
-  # Finance long-form script, low-cost tier
-  python cli.py --niche finance --output-type long --cost-tier low_cost
+  # Generate 4 shorts from Channel A with a custom theme:
+  python cli.py --channel A --output shorts --theme "5 AI tools for passive income"
 
-  # AI/SaaS niche, generate both long + shorts, quality tier
-  python cli.py --niche ai_saas --output-type both --cost-tier quality
-
-  # Passive income, dry-run to estimate cost only
-  python cli.py --niche passive_income --dry-run
-
-  # Use a custom theme
-  python cli.py --niche finance --theme "How to Invest Your First $1,000"
-
-  # List available niches and tiers
-  python cli.py --list-niches
-  python cli.py --list-tiers
+  # Full weekly run for Channel A (long + 4 shorts):
+  python cli.py --channel A --output both --num-shorts 4
 """
 import argparse
-import json
 import sys
 from datetime import datetime
-from pathlib import Path
+from typing import Any, Dict
 
+from channel_presets import ChannelPreset, get_preset
 from config import Config
-from presets import (
-    COST_TIERS,
-    NICHE_PRESETS,
-    OUTPUT_FORMATS,
-    list_niches,
-    list_tiers,
-)
-from script_generator import ContentScriptGenerator
+from content_cache import ContentCache
 
+
+# ──────────────────────────────────────────
+# Argument parser
+# ──────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pipeline",
-        description="Multimodal Content Pipeline – generate YouTube scripts and shorts.",
+        description=(
+            "Multimodal content pipeline for faceless YouTube / Instagram channels"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
 
     parser.add_argument(
-        "--niche",
-        choices=list_niches(),
-        default=Config.DEFAULT_NICHE,
+        "--channel", "-c",
+        choices=["A", "B", "a", "b", "finance", "devotion"],
+        default="B",
+        metavar="CHANNEL",
         help=(
-            "Content niche preset. "
-            f"Default: {Config.DEFAULT_NICHE!r}. "
-            "Options: " + ", ".join(list_niches())
+            "Channel preset: A/finance (Finance & AI Tools) or "
+            "B/devotion (Devotion & Spirituality). Default: B"
         ),
     )
     parser.add_argument(
-        "--output-type",
-        choices=list(OUTPUT_FORMATS.keys()),
+        "--output", "-o",
+        choices=["long", "shorts", "both"],
         default="both",
-        dest="output_type",
+        help="Output type: long video, shorts, or both. Default: both",
+    )
+    parser.add_argument(
+        "--cost-tier", "-t",
+        choices=["free", "low", "high"],
+        default="free",
         help=(
-            "Output format. "
-            "'long' = long-form script only; "
-            "'shorts' = shorts/reels only; "
-            "'both' = long + shorts (default)."
+            "Cost tier: free (gTTS + gpt-3.5), low (ElevenLabs basic + gpt-3.5), "
+            "high (ElevenLabs professional + gpt-4). Default: free"
         ),
     )
     parser.add_argument(
-        "--cost-tier",
-        choices=list_tiers(),
-        default=Config.DEFAULT_COST_TIER,
-        dest="cost_tier",
-        help=(
-            "API cost tier. "
-            f"Default: {Config.DEFAULT_COST_TIER!r}. "
-            "Options: " + ", ".join(list_tiers())
-        ),
+        "--dry-run", "-n",
+        action="store_true",
+        help="Estimate costs without making API calls",
     )
     parser.add_argument(
         "--theme",
         default=None,
-        help="Custom theme/topic for the script (overrides niche default).",
+        help="Specific topic/theme override (uses preset topics by default)",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="Estimate cost/usage without calling paid APIs.",
-    )
-    parser.add_argument(
-        "--list-niches",
-        action="store_true",
-        dest="list_niches",
-        help="Print available niche presets and exit.",
-    )
-    parser.add_argument(
-        "--list-tiers",
-        action="store_true",
-        dest="list_tiers",
-        help="Print available cost tiers and exit.",
-    )
-    parser.add_argument(
-        "--output-dir",
+        "--week", "-w",
+        type=int,
         default=None,
-        dest="output_dir",
-        help="Directory to save generated scripts (default: output_videos/).",
+        help="Week number for theme rotation (default: current ISO week)",
     )
     parser.add_argument(
-        "--json",
+        "--num-shorts",
+        type=int,
+        default=4,
+        choices=range(1, 9),
+        metavar="N",
+        help="Number of shorts to generate (1-8). Default: 4",
+    )
+    parser.add_argument(
+        "--no-cache",
         action="store_true",
-        dest="json_output",
-        help="Print result as JSON instead of human-readable text.",
+        help="Disable output caching for this run",
     )
     return parser
 
 
-def print_niches():
-    print("\nAvailable niche presets:")
-    for key, preset in NICHE_PRESETS.items():
-        print(f"  {key:<20} {preset['description']}")
-    print()
+# ──────────────────────────────────────────
+# Cost estimation (dry-run)
+# ──────────────────────────────────────────
 
+def estimate_costs(
+    preset: ChannelPreset,
+    output_type: str,
+    cost_tier: str,
+    num_shorts: int,
+) -> Dict[str, Any]:
+    """Estimate API costs for a pipeline run without calling any external APIs."""
 
-def print_tiers():
-    print("\nAvailable cost tiers:")
-    for key, tier in COST_TIERS.items():
-        est = tier.get("estimated_cost_usd", "?")
-        print(
-            f"  {key:<12} model={tier['script_model']:<16} "
-            f"~${est:.3f}/run   {tier['description']}"
-        )
-    print(
-        "\nDecision table:\n"
-        "  free       → 100% free, gTTS + gpt-3.5-turbo. Best for testing.\n"
-        "  low_cost   → ~$0.02/run, gpt-4o-mini + optional ElevenLabs starter.\n"
-        "               Recommended for regular content production.\n"
-        "  quality    → ~$0.20/run, gpt-4o + ElevenLabs + Replicate images.\n"
-        "               Use for flagship/hero content only.\n"
+    # Rough word counts
+    long_words = preset.long_video_duration_minutes * 130  # ~130 wpm
+    short_words = preset.short_video_duration_seconds * 130 / 60  # ~130 wpm
+
+    # Token estimates (1 token ≈ 0.75 words)
+    long_input_tokens = 400
+    long_output_tokens = int(long_words / 0.75)
+    short_input_tokens = long_output_tokens + 400  # full script + prompt overhead
+    short_output_tokens = int(short_words * num_shorts / 0.75) + 200
+    title_tokens = 200  # per set
+
+    model = "gpt-4" if cost_tier == "high" else "gpt-3.5-turbo"
+    if model == "gpt-4":
+        in_price, out_price = 0.03 / 1000, 0.06 / 1000
+    else:
+        in_price, out_price = 0.0015 / 1000, 0.002 / 1000
+
+    script_cost = (long_input_tokens * in_price) + (long_output_tokens * out_price)
+    shorts_cost = (short_input_tokens * in_price) + (short_output_tokens * out_price)
+    titles_cost = (title_tokens * in_price) + (title_tokens * out_price)
+
+    tts_chars = long_words * 5  # avg 5 chars/word
+    if cost_tier == "free":
+        tts_cost, tts_service = 0.0, "gTTS (free)"
+    elif cost_tier == "low":
+        tts_cost = (tts_chars / 1000) * 0.30  # ElevenLabs: $0.30 per 1 k chars
+        tts_service = "ElevenLabs starter"
+    else:
+        tts_cost = (tts_chars / 1000) * 0.30
+        tts_service = "ElevenLabs professional"
+
+    total = (
+        script_cost
+        + (shorts_cost if output_type != "long" else 0.0)
+        + titles_cost
+        + tts_cost
     )
 
+    return {
+        "model": model,
+        "tts_service": tts_service,
+        "script_generation": round(script_cost, 4),
+        "shorts_extraction": round(shorts_cost, 4) if output_type != "long" else 0.0,
+        "titles_thumbnails": round(titles_cost, 4),
+        "tts_narration": round(tts_cost, 4),
+        "total_usd": round(total, 4),
+        "images": "Free (Pexels / Pixabay)",
+    }
 
-def _save_result(result: dict, output_dir: Path, niche: str) -> Path:
-    """Save generated script result to a text file."""
+
+# ──────────────────────────────────────────
+# Pipeline runners
+# ──────────────────────────────────────────
+
+def run_pipeline(args: argparse.Namespace) -> None:
+    """Run the content pipeline with the given arguments."""
+    if args.no_cache:
+        Config.ENABLE_CACHE = False
+
+    preset = get_preset(args.channel)
+    week = args.week or datetime.now().isocalendar()[1]
+    theme = args.theme or preset.topics[week % len(preset.topics)]
+
+    print("=" * 70)
+    print(f"🎬  MULTIMODAL PIPELINE – {preset.name.upper()}")
+    print("=" * 70)
+    print(f"  Channel   : {preset.channel_id} – {preset.name}")
+    print(f"  Theme     : {theme}")
+    print(f"  Output    : {args.output}")
+    print(f"  Cost tier : {args.cost_tier}")
+    print(f"  Week      : {week}")
+
+    if args.dry_run:
+        costs = estimate_costs(preset, args.output, args.cost_tier, args.num_shorts)
+        print("\n" + "─" * 70)
+        print("  DRY RUN – Estimated costs (no API calls made)")
+        print("─" * 70)
+        print(f"  Model           : {costs['model']}")
+        print(f"  TTS Service     : {costs['tts_service']}")
+        print(f"  Script gen      : ${costs['script_generation']}")
+        print(f"  Shorts extract  : ${costs['shorts_extraction']}")
+        print(f"  Titles/Thumbs   : ${costs['titles_thumbnails']}")
+        print(f"  TTS narration   : ${costs['tts_narration']}")
+        print(f"  Images          : {costs['images']}")
+        print("─" * 70)
+        print(f"  TOTAL estimate  : ${costs['total_usd']}")
+        print("=" * 70)
+        return
+
+    Config.validate_config()
+
+    if preset.channel_id == "B":
+        _run_devotion_pipeline(preset, theme, week, args)
+    else:
+        _run_finance_pipeline(preset, theme, week, args)
+
+
+def _run_devotion_pipeline(
+    preset: ChannelPreset,
+    theme: str,
+    week: int,
+    args: argparse.Namespace,
+) -> None:
+    """Run the devotional pipeline (Channel B)."""
+    from shorts_extractor import ShortsExtractor
+
+    cache = ContentCache()
+
+    if args.output in ("long", "both"):
+        from devotional_pipeline import DevotionalVideoPipeline
+
+        pipeline = DevotionalVideoPipeline()
+        video_path = pipeline.generate_video(theme=theme, week_number=week)
+        print(f"\n✓ Long video: {video_path}")
+
+        extractor = ShortsExtractor()
+        titles_key = {"type": "titles", "topic": theme, "channel": "B"}
+        meta = cache.get(titles_key)
+        if meta is None:
+            meta = extractor.generate_titles_and_thumbnails(
+                theme, preset.system_prompt
+            )
+            cache.set(titles_key, meta)
+
+        _print_titles_thumbnails(meta)
+
+    if args.output in ("shorts", "both"):
+        _generate_shorts_for_preset(preset, theme, args.num_shorts, cache)
+
+
+def _run_finance_pipeline(
+    preset: ChannelPreset,
+    theme: str,
+    week: int,
+    args: argparse.Namespace,
+) -> None:
+    """Run the finance / AI tools pipeline (Channel A)."""
+    import openai
+    from shorts_extractor import ShortsExtractor
+
+    cache = ContentCache()
+    extractor = ShortsExtractor()
+    model = "gpt-4" if args.cost_tier == "high" else "gpt-3.5-turbo"
+
+    # 1. Generate long-form script
+    print("\n[1/3] Generating long-form script...")
+    script_key = {"type": "long_script", "topic": theme, "channel": "A", "model": model}
+    script_data = cache.get(script_key)
+    if script_data is None:
+        openai.api_key = Config.OPENAI_API_KEY
+        response = openai.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": preset.system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Create a {preset.long_video_duration_minutes}-minute educational "
+                        f"video script about: {theme}\n\n"
+                        "Structure it as 5-6 segments. Each segment should have a clear "
+                        "heading and engaging content. Include actionable tips and specific "
+                        "examples.\n\nFormat:\nSEGMENT 1: [Title]\n[Content]\n\nSEGMENT 2: …"
+                    ),
+                },
+            ],
+            temperature=0.7,
+            max_tokens=Config.MAX_TOKENS,
+        )
+        script_data = {
+            "full_script": response.choices[0].message.content,
+            "theme": theme,
+        }
+        cache.set(script_key, script_data)
+
+    print(f"✓ Long script generated ({len(script_data['full_script'])} chars)")
+
+    # 2. Titles and thumbnails
+    print("\n[2/3] Generating titles and thumbnails...")
+    titles_key = {"type": "titles", "topic": theme, "channel": "A"}
+    meta = cache.get(titles_key)
+    if meta is None:
+        meta = extractor.generate_titles_and_thumbnails(theme, preset.system_prompt)
+        cache.set(titles_key, meta)
+    _print_titles_thumbnails(meta)
+
+    # 3. Shorts
+    if args.output in ("shorts", "both"):
+        print("\n[3/3] Extracting shorts...")
+        _extract_and_print_shorts(
+            script_data["full_script"], preset, args.num_shorts, cache
+        )
+
+    # Save script to disk
+    output_dir = Config.OUTPUT_DIR / f"finance_week{week}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{niche}_script_{ts}.json"
-    out_path = output_dir / filename
-    with open(out_path, "w") as fh:
-        json.dump(result, fh, indent=2)
-    return out_path
+    safe_name = theme[:40].replace(" ", "_").replace("/", "-")
+    script_file = output_dir / f"{safe_name}_script.txt"
+    with open(script_file, "w", encoding="utf-8") as fh:
+        fh.write(f"Theme: {theme}\n")
+        fh.write("Channel: A (Finance & AI Tools)\n")
+        fh.write("=" * 70 + "\n\n")
+        fh.write(script_data["full_script"])
+    print(f"\n✓ Script saved: {script_file}")
 
 
-def main(argv=None):
-    parser = build_parser()
-    args = parser.parse_args(argv)
+# ──────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────
 
-    if args.list_niches:
-        print_niches()
-        return 0
+def _generate_shorts_for_preset(
+    preset: ChannelPreset,
+    theme: str,
+    num_shorts: int,
+    cache: ContentCache,
+) -> None:
+    """Generate a short basis script then extract shorts."""
+    import openai
 
-    if args.list_tiers:
-        print_tiers()
-        return 0
+    basis_key = {"type": "short_basis", "topic": theme, "channel": preset.channel_id}
+    basis_script = cache.get(basis_key)
+    if basis_script is None:
+        openai.api_key = Config.OPENAI_API_KEY
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": preset.system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Write a 5-minute script about '{theme}' that contains "
+                        f"{num_shorts} distinct, quotable moments or insights "
+                        "suitable for short-form video clips."
+                    ),
+                },
+            ],
+            temperature=0.7,
+            max_tokens=1500,
+        )
+        basis_script = response.choices[0].message.content
+        cache.set(basis_key, basis_script)
 
-    # Summarise active configuration
-    if not args.json_output:
-        print("=" * 70)
-        print("🎬  MULTIMODAL CONTENT PIPELINE")
-        print("=" * 70)
-        print(f"  Niche      : {args.niche}")
-        print(f"  Output type: {args.output_type}")
-        print(f"  Cost tier  : {args.cost_tier}")
-        if args.theme:
-            print(f"  Theme      : {args.theme}")
-        if args.dry_run:
-            print("  Mode       : DRY RUN (no API calls)")
+    _extract_and_print_shorts(basis_script, preset, num_shorts, cache)
+
+
+def _extract_and_print_shorts(
+    script: str,
+    preset: ChannelPreset,
+    num_shorts: int,
+    cache: ContentCache,
+) -> None:
+    """Extract shorts from *script* and print them."""
+    from shorts_extractor import ShortsExtractor
+
+    extractor = ShortsExtractor()
+    shorts_key = {
+        "type": "shorts",
+        "script_prefix": script[:200],
+        "n": num_shorts,
+        "channel": preset.channel_id,
+    }
+    shorts = cache.get(shorts_key)
+    if shorts is None:
+        shorts = extractor.extract_shorts(script, num_shorts=num_shorts)
+        cache.set(shorts_key, shorts)
+
+    print(f"\n✓ Extracted {len(shorts)} shorts:\n")
+    for i, short in enumerate(shorts, 1):
+        print(f"  SHORT {i}: {short.get('title', 'Untitled')}")
+        hook_preview = short.get("hook", "")[:80]
+        print(f"  Hook   : {hook_preview}{'…' if len(short.get('hook','')) > 80 else ''}")
+        print(f"  Caption: {short.get('caption', '')}")
+        print(f"  Tags   : {' '.join(short.get('hashtags', []))}")
         print()
 
-    generator = ContentScriptGenerator(
-        niche=args.niche,
-        cost_tier=args.cost_tier,
-        output_format=args.output_type,
-        dry_run=args.dry_run,
-    )
 
-    result = generator.generate(theme=args.theme)
+def _print_titles_thumbnails(meta: dict) -> None:
+    print("\n📌 Title options:")
+    for i, t in enumerate(meta.get("titles", []), 1):
+        print(f"   {i}. {t}")
+    print("\n🖼️  Thumbnail text options:")
+    for i, t in enumerate(meta.get("thumbnails", []), 1):
+        print(f"   {i}. {t}")
 
-    if args.json_output:
-        print(json.dumps(result, indent=2))
-        return 0
 
-    # Human-readable output
-    if args.dry_run:
-        print("📊 DRY RUN – Cost Estimate")
-        print(f"   Model            : {result['model']}")
-        print(f"   Est. input tokens: {result['estimated_input_tokens']}")
-        print(f"   Est. output tokens: {result['estimated_output_tokens']}")
-        print(f"   Est. cost (USD)  : ${result['estimated_cost_usd']:.5f}")
-        print(f"   Niche            : {result['niche']}")
-        print(f"   Output format    : {result['output_format']}")
-        return 0
+# ──────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────
 
-    # Save and summarise
-    output_dir = Path(args.output_dir) if args.output_dir else Config.OUTPUT_DIR
-    saved_path = _save_result(result, output_dir, args.niche)
-
-    print(f"✓ Script generated – Theme: {result['theme']}")
-
-    if "long_script" in result:
-        sections = result["long_script"].get("sections", [])
-        print(f"  Long-form  : {len(sections)} sections, "
-              f"{result['long_script'].get('duration_minutes', '?')} minutes")
-        cached = result["long_script"].get("cached", False)
-        if cached:
-            print("  (long-form loaded from cache – no API call)")
-
-    if "shorts" in result:
-        print(f"  Shorts     : {len(result['shorts'])} scripts")
-
-    pkg = result.get("packaging", {})
-    if pkg:
-        print(f"\n📦 Packaging guidance:")
-        print(f"   Title template  : {pkg.get('title_template', '')}")
-        print(f"   Thumbnail text  : {pkg.get('thumbnail_text', '')}")
-
-    if "cost_estimate" in result:
-        est = result["cost_estimate"]
-        print(f"\n💰 Actual API cost estimate: ~${est.get('estimated_cost_usd', 0):.5f}")
-
-    print(f"\n📁 Saved to: {saved_path}")
-    return 0
+def main() -> None:
+    """Main CLI entry point."""
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        run_pipeline(args)
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user.")
+        sys.exit(0)
+    except Exception as exc:
+        print(f"\n❌ Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -38,7 +38,8 @@ temp_files/
 *.png
 *.jpeg
 
-# Pipeline cache (avoids re-billing; safe to delete to force a fresh run)
+# Cache directory
+# Pipeline cache (disk-based cache to avoid re-billing)
 .cache/
 
 # IDE
@@ -59,3 +60,4 @@ htmlcov/
 
 # OS
 Thumbs.db
+
