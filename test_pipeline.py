@@ -12,6 +12,9 @@ def test_imports():
         from visual_assets import VisualAssetFetcher
         from music_handler import BackgroundMusicHandler
         from video_compositor import VideoCompositor
+        from channel_presets import get_preset, CHANNEL_A_FINANCE, CHANNEL_B_DEVOTION
+        from shorts_extractor import ShortsExtractor
+        from content_cache import ContentCache
         print("✓ All modules imported successfully")
         return True
     except Exception as e:
@@ -35,11 +38,21 @@ def test_config():
         assert Config.VIDEO_DURATION_MINUTES == 30, "Duration should be 30 minutes"
         assert Config.VIDEO_WIDTH == 1920, "Width should be 1920"
         assert Config.VIDEO_HEIGHT == 1080, "Height should be 1080"
+
+        # New cost/safety controls
+        assert Config.MAX_TOKENS > 0, "MAX_TOKENS should be positive"
+        assert Config.MAX_RETRIES > 0, "MAX_RETRIES should be positive"
+        assert Config.MAX_IMAGES > 0, "MAX_IMAGES should be positive"
+        assert Config.MAX_TTS_CHARS > 0, "MAX_TTS_CHARS should be positive"
+        assert isinstance(Config.ENABLE_CACHE, bool), "ENABLE_CACHE should be bool"
+        assert Config.RATE_LIMIT_PER_MINUTE > 0, "RATE_LIMIT_PER_MINUTE should be positive"
         
         print("✓ Configuration working correctly")
         print(f"  Output dir: {Config.OUTPUT_DIR}")
         print(f"  Temp dir: {Config.TEMP_DIR}")
         print(f"  Duration: {Config.VIDEO_DURATION_MINUTES} minutes")
+        print(f"  MAX_TOKENS: {Config.MAX_TOKENS}")
+        print(f"  ENABLE_CACHE: {Config.ENABLE_CACHE}")
         return True
     except Exception as e:
         print(f"✗ Config error: {e}")
@@ -388,7 +401,8 @@ def main():
         print("\nNext steps:")
         print("  1. Copy .env.example to .env")
         print("  2. Add your API keys to .env")
-        print("  3. Run: python devotional_pipeline.py")
+        print("  3. Run: python cli.py --channel B --output both  (devotion)")
+        print("         python cli.py --channel A --output both  (finance)")
         return 0
     else:
         print("\n⚠️  Some tests failed. Please fix issues before running pipeline.")

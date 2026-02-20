@@ -38,6 +38,7 @@ temp_files/
 *.png
 *.jpeg
 
+# Cache directory
 # Pipeline cache (disk-based cache to avoid re-billing)
 .cache/
 
