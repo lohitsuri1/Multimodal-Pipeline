@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from config import Config
 from content_presets import get_preset
+from llm_client import call_llm
 from pipeline_cache import get_cached, make_cache_key, set_cached
 from shorts_extractor import extract_shorts, shorts_dry_run_estimate
 
@@ -125,20 +126,13 @@ class GenerateResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _openai_generate(system: str, user: str, max_tokens: int = None) -> str:
-    """Call the OpenAI chat completion API and return the assistant message."""
-    import openai
-
-    openai.api_key = Config.OPENAI_API_KEY
-    response = openai.chat.completions.create(
+    """Call the configured LLM and return the assistant message."""
+    return call_llm(
+        system=system,
+        user=user,
         model="gpt-4",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.7,
         max_tokens=max_tokens or Config.MAX_TOKENS_PER_CALL,
     )
-    return response.choices[0].message.content
 
 
 def _parse_numbered_list(text: str) -> List[str]:
@@ -225,10 +219,10 @@ def generate(
         return GenerateResponse(**{**cached_result, "cached": True})
 
     # ---- Validate API key availability -------------------------------------
-    if not Config.OPENAI_API_KEY:
+    if not Config.OPENAI_API_KEY and not Config.GOOGLE_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="OPENAI_API_KEY is not configured on the server.",
+            detail="Neither OPENAI_API_KEY nor GOOGLE_API_KEY is configured on the server.",
         )
 
     result: Dict = {

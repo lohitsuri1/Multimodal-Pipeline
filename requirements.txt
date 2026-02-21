@@ -7,6 +7,9 @@ pillow>=10.0.0
 numpy>=1.24.0
 gtts>=2.5.0
 
+# LLM fallback: Google Gemini
+google-generativeai>=0.8.0
+
 # Optional: For advanced text-to-speech
 elevenlabs>=0.2.0
 

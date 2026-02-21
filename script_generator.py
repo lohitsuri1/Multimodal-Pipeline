@@ -8,10 +8,12 @@ Supports:
 - Shorts/reels scripts derived from the long-form script
 """
 import openai
+import warnings
 from typing import Any, Dict, List, Optional
 
 from cache_manager import CacheManager
 from config import Config
+from llm_client import call_llm
 from presets import NICHE_PRESETS, COST_TIERS, get_preset, get_cost_tier
 
 
@@ -20,9 +22,8 @@ class DevotionalScriptGenerator:
 
     def __init__(self):
         """Initialize the script generator."""
-        if not Config.OPENAI_API_KEY:
-            raise ValueError("OpenAI API key not configured")
-        openai.api_key = Config.OPENAI_API_KEY
+        if not Config.OPENAI_API_KEY and not Config.GOOGLE_API_KEY:
+            raise ValueError("Either OPENAI_API_KEY or GOOGLE_API_KEY must be configured")
         self.duration_minutes = Config.VIDEO_DURATION_MINUTES
 
     def generate_script(self, theme: str = None) -> Dict[str, Any]:
@@ -37,24 +38,19 @@ class DevotionalScriptGenerator:
         """
         prompt = self._create_prompt(theme)
 
-        try:
-            response = openai.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a spiritual guide creating devotional content about Radha Krishna. Your content is peaceful, uplifting, and appropriate for meditation and spiritual reflection."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.7,
-                max_tokens=3000
-            )
+        system_prompt = (
+            "You are a spiritual guide creating devotional content about Radha Krishna. "
+            "Your content is peaceful, uplifting, and appropriate for meditation and "
+            "spiritual reflection."
+        )
 
-            script_content = response.choices[0].message.content
+        try:
+            script_content = call_llm(
+                system=system_prompt,
+                user=prompt,
+                model="gpt-4",
+                max_tokens=3000,
+            )
 
             # Parse and structure the script
             return self._structure_script(script_content, theme)
@@ -206,9 +202,8 @@ class ContentScriptGenerator:
         )
 
         if not dry_run:
-            if not Config.OPENAI_API_KEY:
-                raise ValueError("OpenAI API key not configured")
-            openai.api_key = Config.OPENAI_API_KEY
+            if not Config.OPENAI_API_KEY and not Config.GOOGLE_API_KEY:
+                raise ValueError("Either OPENAI_API_KEY or GOOGLE_API_KEY must be configured")
 
     # ------------------------------------------------------------------
     # Public API
@@ -297,7 +292,7 @@ class ContentScriptGenerator:
         system_prompt = long_cfg["system_prompt"]
         user_prompt = self._build_long_form_prompt(theme, long_cfg)
 
-        script_text = self._call_openai(system_prompt, user_prompt)
+        script_text = self._call_llm(system_prompt, user_prompt)
         structured = self._structure_long_form(script_text, theme, long_cfg)
 
         if self.cache:
@@ -344,7 +339,7 @@ class ContentScriptGenerator:
             "SHORT [N]: [Title]\nHOOK: ...\nBODY: ...\nCTA: ...\n"
         )
 
-        raw = self._call_openai(system_prompt, user_prompt)
+        raw = self._call_llm(system_prompt, user_prompt)
         shorts = self._parse_shorts(raw, count, theme)
 
         if self.cache:
@@ -352,26 +347,28 @@ class ContentScriptGenerator:
 
         return shorts
 
+    def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
+        """Call the configured LLM with token guardrails."""
+        return call_llm(
+            system=system_prompt,
+            user=user_prompt,
+            model=self.model,
+            max_tokens=self.max_tokens,
+        )
+
     def _call_openai(self, system_prompt: str, user_prompt: str) -> str:
-        """Make an OpenAI chat completion call with retry and token guardrails."""
-        for attempt in range(max(1, self.tier_cfg.get("max_retries", 2))):
-            try:
-                response = openai.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.7,
-                    max_tokens=self.max_tokens,
-                )
-                return response.choices[0].message.content
-            except openai.RateLimitError:
-                if attempt == self.tier_cfg.get("max_retries", 2) - 1:
-                    raise
-            except Exception:
-                raise
-        return ""  # unreachable, satisfies type checker
+        """Deprecated alias for _call_llm kept for backward compatibility.
+
+        .. deprecated::
+            Use ``_call_llm`` instead. ``_call_openai`` will be removed in a
+            future release.
+        """
+        warnings.warn(
+            "_call_openai is deprecated; use _call_llm instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._call_llm(system_prompt, user_prompt)
 
     def _build_long_form_prompt(self, theme: str, long_cfg: dict) -> str:
         """Build the user prompt for a long-form script."""

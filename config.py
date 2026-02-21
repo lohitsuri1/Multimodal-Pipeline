@@ -17,9 +17,13 @@ class Config:
     
     # API Keys
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
     PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
+
+    # LLM provider order (comma-separated; first available provider is tried first)
+    LLM_PROVIDER_ORDER = os.getenv("LLM_PROVIDER_ORDER", "openai,gemini")
 
     # API server auth & rate limiting
     API_KEY = os.getenv("API_KEY")                       # optional; set to protect endpoints
@@ -60,8 +64,8 @@ class Config:
         """Validate required configuration."""
         errors = []
 
-        if not cls.OPENAI_API_KEY:
-            errors.append("OPENAI_API_KEY is not set in .env file")
+        if not cls.OPENAI_API_KEY and not cls.GOOGLE_API_KEY:
+            errors.append("Either OPENAI_API_KEY or GOOGLE_API_KEY must be set in .env file")
 
         # PEXELS or PIXABAY key is needed for visuals
         if not cls.PEXELS_API_KEY and not cls.PIXABAY_API_KEY:
@@ -79,6 +83,7 @@ class Config:
         """Return dictionary of available API keys."""
         return {
             "openai": cls.OPENAI_API_KEY,
+            "google": cls.GOOGLE_API_KEY,
             "elevenlabs": cls.ELEVENLABS_API_KEY,
             "pexels": cls.PEXELS_API_KEY,
             "pixabay": cls.PIXABAY_API_KEY,
