@@ -129,6 +129,15 @@ def create_env_file():
         f.write("VOICE_LANGUAGE=en\n")
         f.write("VOICE_SPEED=0.9\n")
         f.write("MUSIC_VOLUME=0.2\n")
+        f.write("MUSIC_DUCK_DB=6.0\n")
+        f.write("MUSIC_FADE_MS=2500\n")
+        f.write("MUSIC_YOUTUBE_URL=\n")
+        f.write("MUSIC_YOUTUBE_START_SEC=0\n")
+        f.write("MUSIC_YOUTUBE_DURATION_SEC=0\n")
+        f.write("SUBTITLES_ENABLED=true\n")
+        f.write("SUBTITLE_MAX_CHARS=80\n")
+        f.write("SUBTITLE_MIN_SECONDS=2.0\n")
+        f.write("TRANSITION_SECONDS=0.6\n")
     
     print("\n✓ .env file created successfully")
     return True

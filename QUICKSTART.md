@@ -12,13 +12,25 @@ Generate **2 long videos + 8 shorts per week** across two channels automatically
 ### 1. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+# Recommended (ensures pip matches the Python interpreter)
+python -m pip install -r requirements.txt
 
 # Install FFmpeg (required for video assembly)
 # Ubuntu/Debian:
 sudo apt-get install ffmpeg
 # macOS:
 brew install ffmpeg
+```
+
+**Windows (PowerShell) recommended setup:**
+
+```powershell
+# Create and activate a virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# Install dependencies into that same environment
+python -m pip install -r requirements.txt
 ```
 
 ### 2. Get Free API Keys
@@ -36,6 +48,12 @@ cp .env.example .env
 # Edit .env and fill in your API keys
 ```
 
+PowerShell equivalent:
+
+```powershell
+Copy-Item .env.example .env
+```
+
 ### 4. Run!
 
 ```bash
@@ -50,6 +68,9 @@ python cli.py --channel A --output both --theme "5 AI tools for passive income"
 
 # Dry-run cost estimate (no API calls)
 python cli.py --channel A --output both --dry-run
+
+# Idea Engine: generate topic bank + title packs + short hooks
+python cli.py --channel A --ideas --ideas-count 12
 ```
 
 ---
@@ -86,6 +107,8 @@ python cli.py [OPTIONS]
   --theme           Override topic for this run
   --week / -w       ISO week number (default: current week)
   --num-shorts N    1–8 shorts per run     (default: 4)
+  --ideas           Generate weekly idea bank and exit
+  --ideas-count N   Idea topics in idea mode (6–30, default: 12)
   --no-cache        Bypass the output cache for this run
 ```
 
@@ -100,6 +123,9 @@ python cli.py --channel B --output shorts --theme "Krishna's teachings on inner 
 
 # Generate 8 shorts this week (Channel A, high quality)
 python cli.py --channel A --output shorts --num-shorts 8 --cost-tier high
+
+# Generate a devotional idea bank for this week
+python cli.py --channel B --ideas --ideas-count 16
 ```
 
 ---
@@ -184,7 +210,29 @@ Use this table to choose the right tier for your budget:
    # temp_files/music/background_music.mp3
    ```
 
-3. **Important**: Add attribution in your video description!
+  PowerShell equivalent:
+  ```powershell
+  New-Item -ItemType Directory -Force temp_files/music
+  ```
+
+3. Optional auto-download from YouTube (royalty-free links only):
+  ```bash
+  python -m pip install yt-dlp
+  # in .env:
+  # MUSIC_YOUTUBE_URL=https://www.youtube.com/watch?v=...
+  # MUSIC_YOUTUBE_START_SEC=0
+  # MUSIC_YOUTUBE_DURATION_SEC=0
+  ```
+
+4. **Important**: Add attribution in your video description!
+
+5. Optional cinematic polish settings in `.env`:
+  ```bash
+  SUBTITLES_ENABLED=true
+  SUBTITLE_MAX_CHARS=80
+  SUBTITLE_MIN_SECONDS=2.0
+  TRANSITION_SECONDS=0.6
+  ```
 
 ---
 

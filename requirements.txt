@@ -13,6 +13,9 @@ google-generativeai>=0.8.0
 # Optional: For advanced text-to-speech
 elevenlabs>=0.2.0
 
+# Optional: For auto-downloading royalty-free YouTube audio
+yt-dlp>=2025.1.15
+
 # Scheduling and automation
 schedule>=1.2.0
 pyyaml>=6.0

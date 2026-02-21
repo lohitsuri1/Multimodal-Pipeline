@@ -2,12 +2,21 @@
 import sys
 from datetime import datetime
 from pathlib import Path
+from pydub import AudioSegment
 from config import Config
 from script_generator import DevotionalScriptGenerator
 from voice_narrator import VoiceNarrator
 from visual_assets import VisualAssetFetcher
 from music_handler import BackgroundMusicHandler
 from video_compositor import VideoCompositor
+
+
+def _configure_console_encoding() -> None:
+    """Ensure Unicode console output works on Windows terminals."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
 
 class DevotionalVideoPipeline:
     """Orchestrate the complete devotional video generation process."""
@@ -51,6 +60,13 @@ class DevotionalVideoPipeline:
             voice_file
         )
         print(f"✓ Voice narration created: {voice_path}")
+
+        voice_duration_sec = len(AudioSegment.from_file(voice_path)) / 1000.0
+        if voice_duration_sec < 300:
+            print(
+                f"⚠️  Narration is short ({voice_duration_sec:.1f}s). "
+                "Use a more detailed theme/prompt for longer, more cinematic output."
+            )
         
         # Step 3: Fetch visual assets
         print("\n[3/5] Fetching devotional visual assets...")
@@ -87,6 +103,11 @@ class DevotionalVideoPipeline:
                 music_file = None
         else:
             print("⚠️  No background music found")
+            if Config.MUSIC_YOUTUBE_URL:
+                print("   Auto-download was configured but did not succeed.")
+                print("   Verify MUSIC_YOUTUBE_URL and install yt-dlp.")
+            else:
+                print("   Tip: set MUSIC_YOUTUBE_URL in .env for automatic royalty-free music download.")
             print(self.music_handler.setup_music_instructions())
             music_file = None
         
@@ -111,6 +132,7 @@ class DevotionalVideoPipeline:
             images=images,
             voice_audio=voice_path,
             background_music=music_file,
+            subtitle_text=script_data['full_script'],
             output_filename=output_filename
         )
         
@@ -149,12 +171,18 @@ class DevotionalVideoPipeline:
 To use images, either:
 
 OPTION 1: Configure API Keys (Recommended)
-  1. Get free API key from https://www.pexels.com/api/
-     OR https://pixabay.com/api/docs/
-  2. Add to .env file:
-     PEXELS_API_KEY=your_key_here
-     OR
-     PIXABAY_API_KEY=your_key_here
+  1. Add Google AI Studio key (for generated visuals):
+      GOOGLE_API_KEY=your_key_here
+      Optional:
+      VISUAL_PROVIDER_ORDER=google,pexels,pixabay
+      GOOGLE_IMAGE_MODEL=gemini-2.0-flash-preview-image-generation
+  2. Or use free stock APIs:
+      - https://www.pexels.com/api/
+      - https://pixabay.com/api/docs/
+  3. Add to .env file:
+      PEXELS_API_KEY=your_key_here
+      OR
+      PIXABAY_API_KEY=your_key_here
 
 OPTION 2: Add Images Manually
   1. Download 20-30 copyright-safe images from:
@@ -171,6 +199,8 @@ IMPORTANT: Only use royalty-free or public domain images!
 def main():
     """Main entry point for the pipeline."""
     try:
+        _configure_console_encoding()
+
         # Validate configuration
         Config.validate_config()
         

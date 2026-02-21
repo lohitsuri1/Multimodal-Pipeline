@@ -25,6 +25,10 @@ class Config:
     # LLM provider order (comma-separated; first available provider is tried first)
     LLM_PROVIDER_ORDER = os.getenv("LLM_PROVIDER_ORDER", "openai,gemini")
 
+    # Visual provider order (comma-separated; first available provider is tried first)
+    VISUAL_PROVIDER_ORDER = os.getenv("VISUAL_PROVIDER_ORDER", "google,pexels,pixabay")
+    GOOGLE_IMAGE_MODEL = os.getenv("GOOGLE_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation")
+
     # API server auth & rate limiting
     API_KEY = os.getenv("API_KEY")                       # optional; set to protect endpoints
     RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
@@ -40,6 +44,19 @@ class Config:
     VOICE_LANGUAGE = os.getenv("VOICE_LANGUAGE", "en")
     VOICE_SPEED = float(os.getenv("VOICE_SPEED", "0.9"))
     MUSIC_VOLUME = float(os.getenv("MUSIC_VOLUME", "0.2"))
+    MUSIC_DUCK_DB = float(os.getenv("MUSIC_DUCK_DB", "6.0"))
+    MUSIC_FADE_MS = int(os.getenv("MUSIC_FADE_MS", "2500"))
+
+    # Optional YouTube music fallback (royalty-free links only)
+    MUSIC_YOUTUBE_URL = os.getenv("MUSIC_YOUTUBE_URL", "").strip()
+    MUSIC_YOUTUBE_START_SEC = int(os.getenv("MUSIC_YOUTUBE_START_SEC", "0"))
+    MUSIC_YOUTUBE_DURATION_SEC = int(os.getenv("MUSIC_YOUTUBE_DURATION_SEC", "0"))
+
+    # Video polish controls
+    SUBTITLES_ENABLED = os.getenv("SUBTITLES_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    SUBTITLE_MAX_CHARS = int(os.getenv("SUBTITLE_MAX_CHARS", "80"))
+    SUBTITLE_MIN_SECONDS = float(os.getenv("SUBTITLE_MIN_SECONDS", "2.0"))
+    TRANSITION_SECONDS = float(os.getenv("TRANSITION_SECONDS", "0.6"))
 
     # -----------------------------------------------------------------------
     # Cost controls
@@ -67,9 +84,12 @@ class Config:
         if not cls.OPENAI_API_KEY and not cls.GOOGLE_API_KEY:
             errors.append("Either OPENAI_API_KEY or GOOGLE_API_KEY must be set in .env file")
 
-        # PEXELS or PIXABAY key is needed for visuals
-        if not cls.PEXELS_API_KEY and not cls.PIXABAY_API_KEY:
-            errors.append("Either PEXELS_API_KEY or PIXABAY_API_KEY must be set in .env file")
+        # At least one visual source must be configured
+        if not cls.GOOGLE_API_KEY and not cls.PEXELS_API_KEY and not cls.PIXABAY_API_KEY:
+            errors.append(
+                "At least one visual provider key must be set: "
+                "GOOGLE_API_KEY or PEXELS_API_KEY or PIXABAY_API_KEY"
+            )
 
         if errors:
             raise ValueError(
@@ -87,6 +107,7 @@ class Config:
             "elevenlabs": cls.ELEVENLABS_API_KEY,
             "pexels": cls.PEXELS_API_KEY,
             "pixabay": cls.PIXABAY_API_KEY,
+            "google_image_model": cls.GOOGLE_IMAGE_MODEL,
         }
 
     @classmethod

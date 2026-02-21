@@ -4,7 +4,9 @@ from typing import List
 import subprocess
 from config import Config
 from pydub import AudioSegment
+from pydub import effects
 import math
+import re
 
 class VideoCompositor:
     """Compose final devotional video from visuals, voice, and music."""
@@ -21,6 +23,7 @@ class VideoCompositor:
         images: List[Path],
         voice_audio: Path,
         background_music: Path = None,
+        subtitle_text: str = None,
         output_filename: str = "devotional_video.mp4"
     ) -> Path:
         """
@@ -52,7 +55,12 @@ class VideoCompositor:
         
         # Step 4: Combine video and audio
         print("Combining video and audio...")
-        final_path = self._combine_video_and_audio(video_path, audio_path, output_path)
+        final_path = self._combine_video_and_audio(
+            video_path,
+            audio_path,
+            output_path,
+            subtitle_text=subtitle_text,
+        )
         
         print(f"✓ Video created successfully: {final_path}")
         return final_path
@@ -76,10 +84,12 @@ class VideoCompositor:
         
         # Load voice audio
         voice = AudioSegment.from_file(voice_audio)
+        voice = effects.normalize(voice, headroom=1.0)
         
         if background_music and background_music.exists():
             # Load background music
             music = AudioSegment.from_file(background_music)
+            music = effects.normalize(music, headroom=8.0)
             
             # Loop music to match voice duration if needed
             voice_duration = len(voice)
@@ -93,10 +103,17 @@ class VideoCompositor:
             # Trim music to match voice duration
             music = music[:voice_duration]
             
-            # Reduce music volume relative to voice
-            # Calculate dB reduction: 0.2 volume -> -14dB, 0.5 volume -> -6dB, 0.8 volume -> -2dB
-            volume_reduction_db = 20 * (1 - Config.MUSIC_VOLUME)
-            music = music - volume_reduction_db
+            # Smooth music entry/exit to avoid abrupt starts/stops
+            fade_ms = max(0, Config.MUSIC_FADE_MS)
+            if fade_ms > 0:
+                music = music.fade_in(fade_ms).fade_out(fade_ms)
+
+            # Reduce music level relative to voice and add extra ducking headroom.
+            if Config.MUSIC_VOLUME <= 0:
+                gain_db = -120.0
+            else:
+                gain_db = 20.0 * math.log10(Config.MUSIC_VOLUME)
+            music = music.apply_gain(gain_db - Config.MUSIC_DUCK_DB)
             
             # Overlay music under voice
             combined = voice.overlay(music)
@@ -139,6 +156,11 @@ class VideoCompositor:
         
         if not images:
             raise ValueError("No images provided for video creation")
+
+        if len(images) > 1 and Config.TRANSITION_SECONDS > 0:
+            transitioned = self._create_video_with_transitions(images, duration)
+            if transitioned:
+                return transitioned
         
         # Calculate duration per image
         duration_per_image = duration / len(images)
@@ -179,8 +201,11 @@ class VideoCompositor:
             "-i", str(concat_file),
             "-vf", video_filter,
             "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
+            "-preset", "slow",
+            "-crf", "20",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-movflags", "+faststart",
             "-pix_fmt", "yuv420p",
             "-y",
             str(output_path)
@@ -201,8 +226,11 @@ class VideoCompositor:
                 "-i", str(concat_file),
                 "-vf", simple_filter,
                 "-c:v", "libx264",
-                "-preset", "medium",
-                "-crf", "23",
+                "-preset", "slow",
+                "-crf", "20",
+                "-profile:v", "high",
+                "-level", "4.2",
+                "-movflags", "+faststart",
                 "-pix_fmt", "yuv420p",
                 "-r", str(Config.VIDEO_FPS),
                 "-y",
@@ -214,12 +242,73 @@ class VideoCompositor:
                 raise Exception(f"FFmpeg error: {result.stderr}")
         
         return output_path
+
+    def _create_video_with_transitions(self, images: List[Path], duration: float) -> Path:
+        """Create slideshow with gentle crossfade transitions between still images."""
+        output_path = self.temp_dir / "slideshow_transitions.mp4"
+
+        image_count = len(images)
+        transition = max(0.0, Config.TRANSITION_SECONDS)
+        clip_duration = max(2.0, duration / image_count)
+
+        input_args = []
+        for img in images:
+            input_args.extend(["-loop", "1", "-t", f"{clip_duration}", "-i", str(img)])
+
+        vfilters = []
+        for index in range(image_count):
+            vfilters.append(
+                f"[{index}:v]scale={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT}:force_original_aspect_ratio=increase,"
+                f"crop={Config.VIDEO_WIDTH}:{Config.VIDEO_HEIGHT},"
+                f"format=yuv420p,"
+                f"settb=AVTB[v{index}]"
+            )
+
+        current = "v0"
+        for index in range(1, image_count):
+            offset = max(0.0, (clip_duration - transition) * index)
+            out_tag = f"xf{index}"
+            vfilters.append(
+                f"[{current}][v{index}]xfade=transition=fade:duration={transition}:offset={offset}[{out_tag}]"
+            )
+            current = out_tag
+
+        filter_complex = ";".join(vfilters)
+
+        cmd = [
+            "ffmpeg",
+            *input_args,
+            "-filter_complex", filter_complex,
+            "-map", f"[{current}]",
+            "-c:v", "libx264",
+            "-preset", "slow",
+            "-crf", "20",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
+            "-r", str(Config.VIDEO_FPS),
+            "-y",
+            str(output_path),
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("Transitioned slideshow failed, falling back to basic slideshow...")
+            return None
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            print("Transitioned slideshow output was empty, falling back to basic slideshow...")
+            return None
+
+        return output_path
     
     def _combine_video_and_audio(
         self, 
         video_path: Path, 
         audio_path: Path, 
-        output_path: Path
+        output_path: Path,
+        subtitle_text: str = None,
     ) -> Path:
         """
         Combine video and audio into final output.
@@ -232,23 +321,140 @@ class VideoCompositor:
         Returns:
             Path to final video
         """
-        cmd = [
-            "ffmpeg",
-            "-i", str(video_path),
-            "-i", str(audio_path),
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            "-y",
-            str(output_path)
-        ]
+        subtitle_file = None
+        use_subtitles = bool(subtitle_text and Config.SUBTITLES_ENABLED)
+
+        if use_subtitles:
+            duration = self._get_audio_duration(audio_path)
+            subtitle_file = self._create_subtitle_file(subtitle_text, duration)
+
+        if subtitle_file and subtitle_file.exists():
+            subtitle_path = subtitle_file.resolve().as_posix().replace(":", "\\:")
+            subtitle_filter = f"subtitles='{subtitle_path}'"
+            cmd = [
+                "ffmpeg",
+                "-i", str(video_path),
+                "-i", str(audio_path),
+                "-vf", subtitle_filter,
+                "-c:v", "libx264",
+                "-preset", "slow",
+                "-crf", "20",
+                "-profile:v", "high",
+                "-level", "4.2",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-shortest",
+                "-y",
+                str(output_path),
+            ]
+        else:
+            cmd = [
+                "ffmpeg",
+                "-i", str(video_path),
+                "-i", str(audio_path),
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-shortest",
+                "-y",
+                str(output_path)
+            ]
         
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
+            if subtitle_file and subtitle_file.exists():
+                print("Subtitle burn-in failed, retrying without subtitles...")
+                fallback_cmd = [
+                    "ffmpeg",
+                    "-i", str(video_path),
+                    "-i", str(audio_path),
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    "-shortest",
+                    "-y",
+                    str(output_path)
+                ]
+                fallback = subprocess.run(fallback_cmd, capture_output=True, text=True)
+                if fallback.returncode == 0:
+                    return output_path
             raise Exception(f"FFmpeg error combining video and audio: {result.stderr}")
         
         return output_path
+
+    def _create_subtitle_file(self, script_text: str, duration: float) -> Path:
+        """Create simple timed SRT subtitles from script text."""
+        output_path = self.temp_dir / "auto_subtitles.srt"
+        max_chars = max(20, Config.SUBTITLE_MAX_CHARS)
+        min_seconds = max(1.0, Config.SUBTITLE_MIN_SECONDS)
+
+        chunks = self._split_subtitle_chunks(script_text, max_chars)
+        if not chunks:
+            output_path.write_text("", encoding="utf-8")
+            return output_path
+
+        per_chunk = max(min_seconds, duration / len(chunks))
+        max_index = max(0, int(duration / per_chunk) - 1)
+
+        lines = []
+        for index, chunk in enumerate(chunks[: max_index + 1], start=1):
+            start = (index - 1) * per_chunk
+            end = min(duration, index * per_chunk)
+            lines.append(str(index))
+            lines.append(f"{self._to_srt_time(start)} --> {self._to_srt_time(end)}")
+            lines.append(chunk)
+            lines.append("")
+
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+        return output_path
+
+    def _split_subtitle_chunks(self, text: str, max_chars: int) -> List[str]:
+        """Split narration text into subtitle-safe chunks."""
+        cleaned = " ".join(text.replace("\n", " ").split())
+        if not cleaned:
+            return []
+
+        sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+        chunks = []
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+
+            if len(sentence) <= max_chars:
+                chunks.append(sentence)
+                continue
+
+            words = sentence.split()
+            current = []
+            current_len = 0
+            for word in words:
+                word_len = len(word) + (1 if current else 0)
+                if current_len + word_len > max_chars and current:
+                    chunks.append(" ".join(current))
+                    current = [word]
+                    current_len = len(word)
+                else:
+                    current.append(word)
+                    current_len += word_len
+            if current:
+                chunks.append(" ".join(current))
+
+        return chunks
+
+    def _to_srt_time(self, seconds: float) -> str:
+        """Convert seconds to SRT timestamp format."""
+        total_ms = max(0, int(seconds * 1000))
+        hours = total_ms // 3600000
+        minutes = (total_ms % 3600000) // 60000
+        secs = (total_ms % 60000) // 1000
+        millis = total_ms % 1000
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
     
     def check_ffmpeg(self) -> bool:
         """

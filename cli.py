@@ -15,6 +15,7 @@ Usage examples
   python cli.py --channel A --output both --num-shorts 4
 """
 import argparse
+import json
 import sys
 from datetime import datetime
 from typing import Any, Dict
@@ -22,6 +23,7 @@ from typing import Any, Dict
 from channel_presets import ChannelPreset, get_preset
 from config import Config
 from content_cache import ContentCache
+from llm_client import call_llm
 
 
 # ──────────────────────────────────────────
@@ -91,6 +93,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-cache",
         action="store_true",
         help="Disable output caching for this run",
+    )
+    parser.add_argument(
+        "--ideas",
+        action="store_true",
+        help="Generate a weekly content idea bank (topics, hooks, titles) and exit",
+    )
+    parser.add_argument(
+        "--ideas-count",
+        type=int,
+        default=12,
+        choices=range(6, 31),
+        metavar="N",
+        help="Number of idea topics to generate in idea mode (6-30). Default: 12",
     )
     return parser
 
@@ -178,6 +193,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"  Output    : {args.output}")
     print(f"  Cost tier : {args.cost_tier}")
     print(f"  Week      : {week}")
+
+    if args.ideas:
+        if not Config.OPENAI_API_KEY and not Config.GOOGLE_API_KEY:
+            raise ValueError("Either OPENAI_API_KEY or GOOGLE_API_KEY must be configured")
+        _run_idea_engine(preset, theme, week, args)
+        return
 
     if args.dry_run:
         costs = estimate_costs(preset, args.output, args.cost_tier, args.num_shorts)
@@ -389,6 +410,109 @@ def _print_titles_thumbnails(meta: dict) -> None:
     print("\n🖼️  Thumbnail text options:")
     for i, t in enumerate(meta.get("thumbnails", []), 1):
         print(f"   {i}. {t}")
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove optional markdown code fences from model output."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if len(lines) >= 3:
+            cleaned = "\n".join(lines[1:-1]).strip()
+
+    # Best-effort JSON extraction if the model adds explanatory text.
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return cleaned[start : end + 1]
+    return cleaned
+
+
+def _run_idea_engine(
+    preset: ChannelPreset,
+    theme: str,
+    week: int,
+    args: argparse.Namespace,
+) -> None:
+    """Generate and save a weekly idea bank for the selected channel."""
+    cache = ContentCache()
+    idea_key = {
+        "type": "idea_bank",
+        "channel": preset.channel_id,
+        "theme": theme,
+        "week": week,
+        "ideas_count": args.ideas_count,
+    }
+
+    ideas = cache.get(idea_key)
+    if ideas is None:
+        system_prompt = (
+            f"{preset.system_prompt}\n\n"
+            "You are also a YouTube + Instagram growth strategist. "
+            "Return only valid JSON."
+        )
+        user_prompt = (
+            f"Create a weekly content idea bank for channel '{preset.name}' "
+            f"(niche: {preset.niche}, tone: {preset.tone}).\n"
+            f"Anchor around this seed theme: '{theme}'.\n"
+            f"Generate exactly {args.ideas_count} ideas.\n\n"
+            "Return strict JSON with this shape:\n"
+            "{\n"
+            "  \"channel\": string,\n"
+            "  \"week\": number,\n"
+            "  \"seed_theme\": string,\n"
+            "  \"ideas\": [\n"
+            "    {\n"
+            "      \"topic\": string,\n"
+            "      \"long_video_angle\": string,\n"
+            "      \"short_hooks\": [string, string, string, string],\n"
+            "      \"title_options\": [string, string, string],\n"
+            "      \"thumbnail_text\": string,\n"
+            "      \"seo_keywords\": [string, string, string, string],\n"
+            "      \"neo_banana_polish_prompt\": string\n"
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "Rules:\n"
+            "- Keep claims realistic and platform-safe.\n"
+            "- Avoid repetition across ideas.\n"
+            "- Optimize hooks for retention in first 3 seconds.\n"
+            "- neo_banana_polish_prompt should describe a short visual style prompt for external app polishing.\n"
+        )
+
+        raw = call_llm(
+            system=system_prompt,
+            user=user_prompt,
+            model="gpt-4o-mini",
+            max_tokens=min(Config.MAX_TOKENS, 3500),
+        )
+        parsed = json.loads(_strip_code_fences(raw))
+        ideas = parsed
+        cache.set(idea_key, ideas)
+
+    output_dir = Config.OUTPUT_DIR / f"ideas_channel{preset.channel_id}_week{week}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_file = output_dir / f"idea_bank_{timestamp}.json"
+    with open(json_file, "w", encoding="utf-8") as fh:
+        json.dump(ideas, fh, ensure_ascii=False, indent=2)
+
+    print("\n🧠 IDEA ENGINE OUTPUT")
+    print("─" * 70)
+    print(f"Saved: {json_file}")
+
+    idea_items = ideas.get("ideas", []) if isinstance(ideas, dict) else []
+    for i, item in enumerate(idea_items[:5], 1):
+        topic = item.get("topic", "Untitled")
+        title1 = (item.get("title_options") or ["-"])[0]
+        hook1 = (item.get("short_hooks") or ["-"])[0]
+        print(f"{i}. {topic}")
+        print(f"   Title: {title1}")
+        print(f"   Hook : {hook1}")
+
+    if len(idea_items) > 5:
+        print(f"... and {len(idea_items) - 5} more ideas in the JSON file")
 
 
 # ──────────────────────────────────────────

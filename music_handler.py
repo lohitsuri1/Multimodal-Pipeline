@@ -1,6 +1,5 @@
 """Background music handler for devotional videos."""
-import os
-import requests
+import subprocess
 from pathlib import Path
 from typing import List
 from config import Config
@@ -63,6 +62,65 @@ class BackgroundMusicHandler:
             "attribution": "Always credit music creator in video description",
             "license_check": "Verify license allows YouTube monetization if needed"
         }
+
+    def _trim_downloaded_audio(self, audio_path: Path) -> Path:
+        """Optionally trim downloaded music using configured start and duration."""
+        start_sec = max(0, Config.MUSIC_YOUTUBE_START_SEC)
+        duration_sec = max(0, Config.MUSIC_YOUTUBE_DURATION_SEC)
+
+        if start_sec == 0 and duration_sec == 0:
+            return audio_path
+
+        from pydub import AudioSegment
+
+        audio = AudioSegment.from_file(audio_path)
+        start_ms = start_sec * 1000
+
+        if start_ms >= len(audio):
+            return audio_path
+
+        if duration_sec > 0:
+            end_ms = min(len(audio), start_ms + (duration_sec * 1000))
+            trimmed = audio[start_ms:end_ms]
+        else:
+            trimmed = audio[start_ms:]
+
+        output_path = self.music_dir / "background_music.mp3"
+        trimmed.export(output_path, format="mp3")
+        return output_path
+
+    def _download_music_from_youtube(self) -> Path:
+        """Download royalty-free background music from a configured YouTube URL."""
+        youtube_url = Config.MUSIC_YOUTUBE_URL
+        if not youtube_url:
+            return None
+
+        output_pattern = self.music_dir / "youtube_music.%(ext)s"
+        cmd = [
+            "yt-dlp",
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",
+            "-o", str(output_pattern),
+            youtube_url,
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except FileNotFoundError:
+            print("yt-dlp not found. Install it with: python -m pip install yt-dlp")
+            return None
+
+        if result.returncode != 0:
+            print(f"YouTube music download failed: {result.stderr.strip()}")
+            return None
+
+        candidates = sorted(self.music_dir.glob("youtube_music*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not candidates:
+            return None
+
+        downloaded = candidates[0]
+        return self._trim_downloaded_audio(downloaded)
     
     def create_music_placeholder(self, output_path: Path = None) -> Path:
         """
@@ -137,6 +195,11 @@ requirements shown on the download page.
 
 TIP: For 30-minute videos, you may need to loop shorter tracks.
 The video pipeline will handle this automatically.
+
+AUTO-DOWNLOAD (OPTIONAL):
+You can set MUSIC_YOUTUBE_URL in your .env file to auto-download
+audio with yt-dlp when local music is missing. Use only tracks
+you are legally allowed to reuse.
 """
         return instructions
     
@@ -164,6 +227,12 @@ The video pipeline will handle this automatically.
         mp3_files = list(self.music_dir.glob("*.mp3"))
         if mp3_files:
             return mp3_files[0]
+
+        # Optional fallback: auto-download from a royalty-free YouTube URL.
+        auto_downloaded = self._download_music_from_youtube()
+        if auto_downloaded and auto_downloaded.exists():
+            print(f"Downloaded music from YouTube: {auto_downloaded.name}")
+            return auto_downloaded
         
         return None
     
