@@ -25,7 +25,7 @@ brew install ffmpeg
 
 | Key | Required | Where |
 |-----|----------|-------|
-| OpenAI | ✅ Yes | https://platform.openai.com/api-keys |
+| OpenAI **or** Google Gemini | ✅ Yes (pick one) | https://platform.openai.com/api-keys or https://aistudio.google.com/app/apikey |
 | Pexels **or** Pixabay | ✅ Yes (pick one) | https://www.pexels.com/api/ or https://pixabay.com/api/docs/ |
 | ElevenLabs | ❌ Optional | https://elevenlabs.io/ |
 
@@ -236,6 +236,18 @@ Credits:
 | `Missing package` | `pip install -r requirements.txt` |
 | `Invalid API key` (API server) | Check `PIPELINE_API_KEY` in `.env` matches your request header |
 | `Rate limit exceeded` | Wait 1 minute or increase `RATE_LIMIT_PER_MINUTE` in `.env` |
+
+---
+
+## 🔁 LLM Fallback (Gemini Backup)
+
+If your OpenAI quota runs out, the pipeline automatically retries using **Google Gemini** (free: 1,500 requests/day).
+
+To enable:
+1. Get a free key at https://aistudio.google.com/app/apikey
+2. Add `GOOGLE_API_KEY=your_key` to your `.env` file
+
+No code changes needed — fallback is automatic.
 
 ---
 
